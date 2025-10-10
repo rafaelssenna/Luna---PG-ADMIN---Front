@@ -1,5 +1,5 @@
 // Configuration
-const API_BASE_URL = "" // Configure your API base URL here (e.g., 'https://your-n8n-instance.com')
+const API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app" // Configure your API base URL here (e.g., 'https://your-n8n-instance.com')
 
 // State Management
 const state = {
