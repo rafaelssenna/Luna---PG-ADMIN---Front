@@ -1,5 +1,68 @@
 // Configuration
-const API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app" // Configure your API base URL here (e.g., 'https://your-n8n-instance.com')
+const API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app"
+
+// ====== Novos: Automação no front ======
+const AUTO_INTERVAL_MS = 30000; // 30s (ajuste se quiser)
+const autoTimers = {}; // { [slug]: intervalId }
+
+function settingsKey(slug) {
+  return `luna_pg_client_settings__${slug}`
+}
+function loadLocalSettings(slug) {
+  try {
+    return JSON.parse(localStorage.getItem(settingsKey(slug))) || { autoRun: false, iaAuto: false, lastRunAt: null }
+  } catch {
+    return { autoRun: false, iaAuto: false, lastRunAt: null }
+  }
+}
+function saveLocalSettings(slug, partial) {
+  const next = { ...loadLocalSettings(slug), ...(partial || {}) }
+  localStorage.setItem(settingsKey(slug), JSON.stringify(next))
+  return next
+}
+function startAutoFor(slug) {
+  stopAutoFor(slug)
+  autoTimers[slug] = setInterval(async () => {
+    try {
+      const { iaAuto } = loadLocalSettings(slug)
+      // O backend ignora campos extras; enviamos iaAuto para futura compatibilidade
+      await api("/api/loop", {
+        method: "POST",
+        body: JSON.stringify({ client: slug, iaAuto }),
+      })
+      // Atualiza status e telas
+      if (state.selected === slug) {
+        const iso = new Date().toISOString()
+        state.settings = saveLocalSettings(slug, { lastRunAt: iso })
+        renderSettings()
+        await Promise.all([
+          loadQueue(),
+          loadTotals(),
+          (async () => {
+            const stats = await api(`/api/stats?client=${slug}`)
+            state.kpis = stats
+            renderKPIs()
+          })(),
+        ])
+      }
+      await loadClients()
+    } catch (e) {
+      console.error("Auto-run erro:", e)
+    }
+  }, AUTO_INTERVAL_MS)
+}
+function stopAutoFor(slug) {
+  if (autoTimers[slug]) {
+    clearInterval(autoTimers[slug])
+    delete autoTimers[slug]
+  }
+}
+function applyAutoState(slug) {
+  const { autoRun } = loadLocalSettings(slug)
+  if (autoRun) startAutoFor(slug)
+  else stopAutoFor(slug)
+}
+// ======================================
 
 // State Management
 const state = {
@@ -8,6 +71,8 @@ const state = {
   queue: { items: [], page: 1, total: 0, pageSize: 25, search: "" },
   totals: { items: [], page: 1, total: 0, pageSize: 25, search: "", sent: "all" },
   kpis: { totais: 0, enviados: 0, pendentes: 0, fila: 0 },
+  // Novos: espelho do que fica no localStorage por cliente
+  settings: { autoRun: false, iaAuto: false, lastRunAt: null },
 }
 
 // Utility: API Helper
@@ -68,7 +133,6 @@ function showToast(message, type = "info") {
 function showLoading() {
   document.getElementById("loading-overlay").style.display = "flex"
 }
-
 function hideLoading() {
   document.getElementById("loading-overlay").style.display = "none"
 }
@@ -76,18 +140,11 @@ function hideLoading() {
 // Utility: Normalize Client Slug
 function normalizeSlug(input) {
   let slug = input.trim().toLowerCase()
-
-  // Add 'cliente_' prefix if not present
-  if (!slug.startsWith("cliente_")) {
-    slug = `cliente_${slug}`
-  }
-
-  // Validate format
+  if (!slug.startsWith("cliente_")) slug = `cliente_${slug}`
   const validPattern = /^cliente_[a-z0-9_]+$/
   if (!validPattern.test(slug)) {
     throw new Error("Slug inválido. Use apenas letras minúsculas, números e underscores.")
   }
-
   return slug
 }
 
@@ -104,27 +161,132 @@ function formatDate(dateString) {
   })
 }
 
-// Inicia o loop de processamento para um cliente
+// ====== NOVOS: Aba Config (injetada) ======
+function injectConfigTabOnce() {
+  // Se já existe, não injeta de novo
+  if (document.querySelector('.tab[data-tab="config"]') && document.getElementById("tab-config")) {
+    return
+  }
+
+  const tabs = document.querySelector(".tabs")
+  const clientView = document.getElementById("client-view")
+  if (!tabs || !clientView) return
+
+  // Botão da aba
+  const btn = document.createElement("button")
+  btn.className = "tab"
+  btn.dataset.tab = "config"
+  btn.innerHTML = `<i data-lucide="settings"></i>Config`
+  tabs.appendChild(btn)
+
+  // Conteúdo da aba
+  const content = document.createElement("div")
+  content.id = "tab-config"
+  content.className = "tab-content"
+  content.innerHTML = `
+    <div class="form-card">
+      <h3>Configurações do Cliente</h3>
+
+      <div class="checkbox-group">
+        <label>
+          <input type="checkbox" id="auto-run-toggle">
+          <span>Execução automática do loop</span>
+        </label>
+      </div>
+
+      <div class="checkbox-group" style="margin-top:.5rem;">
+        <label>
+          <input type="checkbox" id="ia-auto-toggle">
+          <span>IA automática</span>
+        </label>
+      </div>
+
+      <div style="margin-top:1rem; display:flex; gap:.5rem; align-items:center;">
+        <button id="save-settings" class="btn btn-primary">
+          <i data-lucide="save"></i>
+          <span>Salvar</span>
+        </button>
+        <button id="run-now" class="btn btn-secondary">
+          <i data-lucide="play-circle"></i>
+          <span>Executar Agora</span>
+        </button>
+        <span id="settings-status" style="color: var(--muted); font-size:.9rem; margin-left:.25rem;"></span>
+      </div>
+    </div>
+  `
+  clientView.appendChild(content)
+
+  // Navegação da aba (sem depender do bind inicial)
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"))
+    btn.classList.add("active")
+    document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"))
+    document.getElementById("tab-config").classList.add("active")
+  })
+
+  // Ações
+  document.getElementById("save-settings").addEventListener("click", () => {
+    const next = saveLocalSettings(state.selected, {
+      autoRun: document.getElementById("auto-run-toggle").checked,
+      iaAuto: document.getElementById("ia-auto-toggle").checked,
+    })
+    state.settings = next
+    applyAutoState(state.selected)
+    renderSettings()
+    showToast("Configurações salvas", "success")
+  })
+
+  document.getElementById("run-now").addEventListener("click", () => runLoop(state.selected))
+
+  // Render ícones dessa aba
+  if (window.lucide && typeof window.lucide.createIcons === "function") {
+    window.lucide.createIcons()
+  }
+}
+
+function renderSettings() {
+  // Se a aba ainda não existe, não faz nada
+  const autoEl = document.getElementById("auto-run-toggle")
+  const iaEl = document.getElementById("ia-auto-toggle")
+  const statusEl = document.getElementById("settings-status")
+  if (!autoEl || !iaEl || !statusEl) return
+
+  autoEl.checked = !!state.settings.autoRun
+  iaEl.checked = !!state.settings.iaAuto
+  const last = state.settings.lastRunAt ? formatDate(state.settings.lastRunAt) : "-"
+  statusEl.textContent = `Última execução: ${last}`
+}
+// ==========================================
+
+// Inicia o loop de processamento para um cliente (já existia; mantido)
 async function runLoop(clientSlug) {
   try {
     const slug = clientSlug || state.selected
-    if (!slug) {
-      throw new Error("Nenhum cliente selecionado")
-    }
+    if (!slug) throw new Error("Nenhum cliente selecionado")
+    const { iaAuto } = loadLocalSettings(slug)
     await api("/api/loop", {
       method: "POST",
-      body: JSON.stringify({ client: slug }),
+      body: JSON.stringify({ client: slug, iaAuto }),
     })
+    // Registra última execução local
+    const iso = new Date().toISOString()
+    state.settings = saveLocalSettings(slug, { lastRunAt: iso })
+    renderSettings()
+
     showToast(`Loop iniciado para ${slug}`, "success")
-    // Atualiza dados: se o loop é do cliente selecionado, recarrega dados dele e a lista de clientes
+
     if (state.selected === slug) {
-      await Promise.all([loadQueue(), loadTotals(), loadClients(), (async () => {
-        const stats = await api(`/api/stats?client=${slug}`)
-        state.kpis = stats
-        renderKPIs()
-      })()])
+      await Promise.all([
+        loadQueue(),
+        loadTotals(),
+        loadClients(),
+        (async () => {
+          const stats = await api(`/api/stats?client=${slug}`)
+          state.kpis = stats
+          renderKPIs()
+        })(),
+      ])
     } else {
-      // Apenas atualiza lista de clientes (badge de fila)
       await loadClients()
     }
   } catch (error) {
@@ -143,7 +305,6 @@ async function loadClients() {
     if (!state.selected && state.clients.length > 0) {
       selectClient(state.clients[0].slug)
     } else if (state.selected) {
-      // Refresh current client data
       await loadClientData(state.selected)
     }
   } catch (error) {
@@ -155,7 +316,6 @@ async function loadClients() {
 function renderClientList() {
   const container = document.getElementById("client-list")
   const searchTerm = document.getElementById("client-search").value.toLowerCase()
-
   const filteredClients = state.clients.filter((client) => client.slug.toLowerCase().includes(searchTerm))
 
   if (filteredClients.length === 0) {
@@ -165,32 +325,29 @@ function renderClientList() {
   }
 
   container.innerHTML = filteredClients
-    .map(
-      (client) => {
-        const active = state.selected === client.slug ? "active" : ""
-        const badge = client.queueCount !== undefined ? `<span class="client-badge">${client.queueCount}</span>` : ""
-        // Botão para executar o loop manualmente
-        const loopButton = `<button class="btn-icon run-loop-btn" data-slug="${client.slug}" title="Executar loop" aria-label="Executar loop"><i data-lucide="play-circle"></i></button>`
-        return `
-    <div class="client-item ${active}" data-slug="${client.slug}" role="listitem">
-      <span class="client-name">${client.slug}</span>
-      <div class="client-actions">
-        ${badge}
-        ${loopButton}
-      </div>
-    </div>
-  `
-      },
-    )
+    .map((client) => {
+      const active = state.selected === client.slug ? "active" : ""
+      const badge = client.queueCount !== undefined ? `<span class="client-badge">${client.queueCount}</span>` : ""
+      const loopButton = `<button class="btn-icon run-loop-btn" data-slug="${client.slug}" title="Executar loop" aria-label="Executar loop"><i data-lucide="play-circle"></i></button>`
+      return `
+        <div class="client-item ${active}" data-slug="${client.slug}" role="listitem">
+          <span class="client-name">${client.slug}</span>
+          <div class="client-actions">
+            ${badge}
+            ${loopButton}
+          </div>
+        </div>
+      `
+    })
     .join("")
 
-  // Add click handlers
+  // Click para selecionar cliente
   container.querySelectorAll(".client-item").forEach((item) => {
     item.addEventListener("click", () => {
       selectClient(item.dataset.slug)
     })
   })
-  // Handler para os botões de loop (pare este evento de propagar para seleção do cliente)
+  // Botão ▶ executar loop
   container.querySelectorAll(".run-loop-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation()
@@ -198,8 +355,8 @@ function renderClientList() {
       runLoop(slug)
     })
   })
-  // Renderiza os ícones novamente (Lucide)
-  if (window.lucide && typeof window.lucide.createIcons === 'function') {
+  // Ícones
+  if (window.lucide && typeof window.lucide.createIcons === "function") {
     window.lucide.createIcons()
   }
 }
@@ -226,22 +383,30 @@ async function selectClient(slug) {
   document.getElementById("totals-search").value = ""
   document.getElementById("totals-filter").value = "all"
 
-  // Load client data
+  // Garante que a aba Config exista
+  injectConfigTabOnce()
+
+  // Carrega dados do cliente
   await loadClientData(slug)
+
+  // Carrega/Renderiza configurações locais e aplica automático
+  state.settings = loadLocalSettings(slug)
+  renderSettings()
+  applyAutoState(slug)
 }
 
 // Load Client Data
 async function loadClientData(slug) {
   try {
-    // Load KPIs
+    // KPIs
     const stats = await api(`/api/stats?client=${slug}`)
     state.kpis = stats
     renderKPIs()
 
-    // Load Queue
+    // Fila
     await loadQueue()
 
-    // Load Totals
+    // Totais
     await loadTotals()
   } catch (error) {
     console.error("[v0] Failed to load client data:", error)
@@ -260,17 +425,10 @@ function renderKPIs() {
 async function loadQueue() {
   try {
     const { page, pageSize, search } = state.queue
-    const params = new URLSearchParams({
-      client: state.selected,
-      page,
-      pageSize,
-      search,
-    })
-
+    const params = new URLSearchParams({ client: state.selected, page, pageSize, search })
     const response = await api(`/api/queue?${params}`)
     state.queue.items = response.items || response
     state.queue.total = response.total || response.length || 0
-
     renderQueue()
   } catch (error) {
     console.error("[v0] Failed to load queue:", error)
@@ -280,10 +438,8 @@ async function loadQueue() {
 // Render Queue
 function renderQueue() {
   const tbody = document.getElementById("queue-table-body")
-
   if (state.queue.items.length === 0) {
-    tbody.innerHTML =
-      '<tr><td colspan="3" style="text-align: center; color: var(--muted);">Nenhum contato na fila</td></tr>'
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--muted);">Nenhum contato na fila</td></tr>'
   } else {
     tbody.innerHTML = state.queue.items
       .map(
@@ -304,16 +460,13 @@ function renderQueue() {
           </div>
         </td>
       </tr>
-    `,
+    `
       )
       .join("")
   }
 
-  // Update pagination
   const totalPages = Math.ceil(state.queue.total / state.queue.pageSize)
-  document.getElementById("queue-page-info").textContent =
-    `Página ${state.queue.page} de ${totalPages || 1} (${state.queue.total} itens)`
-
+  document.getElementById("queue-page-info").textContent = `Página ${state.queue.page} de ${totalPages || 1} (${state.queue.total} itens)`
   document.getElementById("queue-prev").disabled = state.queue.page === 1
   document.getElementById("queue-next").disabled = state.queue.page >= totalPages
 }
@@ -322,18 +475,10 @@ function renderQueue() {
 async function loadTotals() {
   try {
     const { page, pageSize, search, sent } = state.totals
-    const params = new URLSearchParams({
-      client: state.selected,
-      page,
-      pageSize,
-      search,
-      sent,
-    })
-
+    const params = new URLSearchParams({ client: state.selected, page, pageSize, search, sent })
     const response = await api(`/api/totals?${params}`)
     state.totals.items = response.items || response
     state.totals.total = response.total || response.length || 0
-
     renderTotals()
   } catch (error) {
     console.error("[v0] Failed to load totals:", error)
@@ -343,7 +488,6 @@ async function loadTotals() {
 // Render Totals
 function renderTotals() {
   const tbody = document.getElementById("totals-table-body")
-
   if (state.totals.items.length === 0) {
     tbody.innerHTML =
       '<tr><td colspan="5" style="text-align: center; color: var(--muted);">Nenhum registro encontrado</td></tr>'
@@ -362,38 +506,27 @@ function renderTotals() {
         </td>
         <td>${formatDate(item.updated_at)}</td>
       </tr>
-    `,
+    `
       )
       .join("")
   }
 
-  // Update pagination
   const totalPages = Math.ceil(state.totals.total / state.totals.pageSize)
   document.getElementById("totals-page-info").textContent =
     `Página ${state.totals.page} de ${totalPages || 1} (${state.totals.total} itens)`
-
   document.getElementById("totals-prev").disabled = state.totals.page === 1
   document.getElementById("totals-next").disabled = state.totals.page >= totalPages
 }
 
-// Mark as Sent  (corrigido: some só da FILA e marca enviado nos totais)
+// Mark as Sent
 window.markAsSent = async (phone) => {
   try {
     await api("/api/queue", {
       method: "DELETE",
-      body: JSON.stringify({
-        client: state.selected,
-        phone,
-        markSent: true, // <-- ESSENCIAL: marca como enviada em _totais
-      }),
+      body: JSON.stringify({ client: state.selected, phone, markSent: true }),
     })
-
     showToast("Contato marcado como enviado", "success")
-
-    // Deixe os totais em 'all' para visualizar o item recém-enviado
     state.totals.sent = "all"
-
-    // Atualiza Fila, Totais, KPIs e contadores da lista de clientes
     await Promise.all([
       loadQueue(),
       loadTotals(),
@@ -423,27 +556,16 @@ window.removeFromQueue = (phone) => {
 
   modal.classList.add("active")
 
-  // Set confirm handler
   const confirmBtn = document.getElementById("modal-confirm")
   confirmBtn.onclick = async () => {
     try {
       await api("/api/queue", {
         method: "DELETE",
-        body: JSON.stringify({
-          client: state.selected,
-          phone,
-          markSent: checkbox.checked,
-        }),
+        body: JSON.stringify({ client: state.selected, phone, markSent: checkbox.checked }),
       })
-
       showToast("Contato removido da fila", "success")
       modal.classList.remove("active")
-
-      if (checkbox.checked) {
-        // Mostra o contato recém-marcado como enviado
-        state.totals.sent = "all"
-      }
-
+      if (checkbox.checked) state.totals.sent = "all"
       await Promise.all([
         loadQueue(),
         loadTotals(),
@@ -464,15 +586,8 @@ window.removeFromQueue = (phone) => {
 async function createClient(slug) {
   try {
     const normalizedSlug = normalizeSlug(slug)
-
-    await api("/api/clients", {
-      method: "POST",
-      body: JSON.stringify({ slug: normalizedSlug }),
-    })
-
+    await api("/api/clients", { method: "POST", body: JSON.stringify({ slug: normalizedSlug }) })
     showToast(`Cliente ${normalizedSlug} criado com sucesso`, "success")
-
-    // Reload clients and select new one
     await loadClients()
     selectClient(normalizedSlug)
   } catch (error) {
@@ -485,12 +600,7 @@ async function addContact(name, phone, niche) {
   try {
     const response = await api("/api/contacts", {
       method: "POST",
-      body: JSON.stringify({
-        client: state.selected,
-        name,
-        phone,
-        niche: niche || null,
-      }),
+      body: JSON.stringify({ client: state.selected, name, phone, niche: niche || null }),
     })
 
     const statusMessages = {
@@ -501,10 +611,8 @@ async function addContact(name, phone, niche) {
 
     const message = statusMessages[response.status] || "Contato processado"
     const type = response.status === "inserted" ? "success" : "warning"
-
     showToast(message, type)
 
-    // Reload data if inserted
     if (response.status === "inserted") {
       await loadClientData(state.selected)
       await loadClients()
@@ -522,27 +630,18 @@ async function importCSV(file) {
     formData.append("client", state.selected)
 
     showLoading()
-    const response = await fetch(`${API_BASE_URL}/api/import`, {
-      method: "POST",
-      body: formData,
-    })
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`)
-    }
+    const response = await fetch(`${API_BASE_URL}/api/import`, { method: "POST", body: formData })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
 
     const result = await response.json()
     hideLoading()
 
-    // Show results
     document.getElementById("import-result").style.display = "block"
     document.getElementById("import-inserted").textContent = result.inserted || 0
     document.getElementById("import-skipped").textContent = result.skipped || 0
     document.getElementById("import-errors").textContent = result.errors || 0
 
     showToast("Importação concluída", "success")
-
-    // Reload data
     await loadClientData(state.selected)
     await loadClients()
   } catch (error) {
@@ -566,8 +665,11 @@ function downloadCSVTemplate() {
 
 // Event Listeners
 document.addEventListener("DOMContentLoaded", () => {
+  // Inject da aba Config logo no início
+  injectConfigTabOnce()
+
   // Initialize Lucide icons
-  const lucide = window.lucide // Declare the lucide variable
+  const lucide = window.lucide
   lucide.createIcons()
 
   // Refresh button
@@ -584,19 +686,14 @@ document.addEventListener("DOMContentLoaded", () => {
     e.target.reset()
   })
 
-  // Tabs
+  // Tabs (existentes)
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       const tabName = tab.dataset.tab
-
-      // Update active tab
       document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"))
+      tab.addEventListener("click", () => {}) // noop (mantém assinatura)
       tab.classList.add("active")
-
-      // Update active content
-      document.querySelectorAll(".tab-content").forEach((content) => {
-        content.classList.remove("active")
-      })
+      document.querySelectorAll(".tab-content").forEach((content) => content.classList.remove("active"))
       document.getElementById(`tab-${tabName}`).classList.add("active")
     })
   })
@@ -615,7 +712,6 @@ document.addEventListener("DOMContentLoaded", () => {
       loadQueue()
     }
   })
-
   document.getElementById("queue-next").addEventListener("click", () => {
     const totalPages = Math.ceil(state.queue.total / state.queue.pageSize)
     if (state.queue.page < totalPages) {
@@ -645,7 +741,6 @@ document.addEventListener("DOMContentLoaded", () => {
       loadTotals()
     }
   })
-
   document.getElementById("totals-next").addEventListener("click", () => {
     const totalPages = Math.ceil(state.totals.total / state.totals.pageSize)
     if (state.totals.page < totalPages) {
@@ -660,7 +755,6 @@ document.addEventListener("DOMContentLoaded", () => {
     const name = document.getElementById("contact-name").value
     const phone = document.getElementById("contact-phone").value
     const niche = document.getElementById("contact-niche").value
-
     addContact(name, phone, niche)
     e.target.reset()
   })
@@ -675,9 +769,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("import-csv-form").addEventListener("submit", (e) => {
     e.preventDefault()
     const file = document.getElementById("csv-file").files[0]
-    if (file) {
-      importCSV(file)
-    }
+    if (file) importCSV(file)
   })
 
   // Download template
@@ -687,21 +779,19 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("modal-close").addEventListener("click", () => {
     document.getElementById("queue-action-modal").classList.remove("active")
   })
-
   document.getElementById("modal-cancel").addEventListener("click", () => {
     document.getElementById("queue-action-modal").classList.remove("active")
   })
-
-  // Close modal on backdrop click
   document.getElementById("queue-action-modal").addEventListener("click", (e) => {
-    if (e.target.id === "queue-action-modal") {
-      e.target.classList.remove("active")
-    }
+    if (e.target.id === "queue-action-modal") e.target.classList.remove("active")
   })
 
-  // Initial load
+  // Initial load + auto refresh
   loadClients()
-
-  // Auto-refresh every 10 seconds
   setInterval(loadClients, 10000)
+
+  // Limpa timers ao sair
+  window.addEventListener("beforeunload", () => {
+    Object.keys(autoTimers).forEach((slug) => stopAutoFor(slug))
+  })
 })
