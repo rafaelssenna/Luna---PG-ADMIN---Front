@@ -329,7 +329,7 @@ function renderTotals() {
   document.getElementById("totals-next").disabled = state.totals.page >= totalPages
 }
 
-// Mark as Sent
+// Mark as Sent  (corrigido: some só da FILA e marca enviado nos totais)
 window.markAsSent = async (phone) => {
   try {
     await api("/api/queue", {
@@ -337,14 +337,26 @@ window.markAsSent = async (phone) => {
       body: JSON.stringify({
         client: state.selected,
         phone,
+        markSent: true, // <-- ESSENCIAL: marca como enviada em _totais
       }),
     })
 
     showToast("Contato marcado como enviado", "success")
 
-    // Reload data
-    await loadClientData(state.selected)
-    await loadClients() // Update queue counts
+    // Deixe os totais em 'all' para visualizar o item recém-enviado
+    state.totals.sent = "all"
+
+    // Atualiza Fila, Totais, KPIs e contadores da lista de clientes
+    await Promise.all([
+      loadQueue(),
+      loadTotals(),
+      loadClients(),
+      (async () => {
+        const stats = await api(`/api/stats?client=${state.selected}`)
+        state.kpis = stats
+        renderKPIs()
+      })(),
+    ])
   } catch (error) {
     console.error("[v0] Failed to mark as sent:", error)
   }
@@ -380,9 +392,21 @@ window.removeFromQueue = (phone) => {
       showToast("Contato removido da fila", "success")
       modal.classList.remove("active")
 
-      // Reload data
-      await loadClientData(state.selected)
-      await loadClients()
+      if (checkbox.checked) {
+        // Mostra o contato recém-marcado como enviado
+        state.totals.sent = "all"
+      }
+
+      await Promise.all([
+        loadQueue(),
+        loadTotals(),
+        loadClients(),
+        (async () => {
+          const stats = await api(`/api/stats?client=${state.selected}`)
+          state.kpis = stats
+          renderKPIs()
+        })(),
+      ])
     } catch (error) {
       console.error("[v0] Failed to remove from queue:", error)
     }
