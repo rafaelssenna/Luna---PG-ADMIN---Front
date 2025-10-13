@@ -8,7 +8,7 @@
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 </head>
 <body>
-   Header 
+  <!-- Header -->
   <header class="header">
     <div class="header-content">
       <h1 class="logo">Luna</h1>
@@ -20,9 +20,9 @@
     </div>
   </header>
 
-   Main Layout 
+  <!-- Main Layout -->
   <div class="layout">
-     Sidebar 
+    <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <h2>Clientes</h2>
@@ -31,33 +31,22 @@
         </button>
       </div>
 
-       Search Clients 
+      <!-- Search Clients -->
       <div class="search-box">
         <i data-lucide="search"></i>
-        <input 
-          type="text" 
-          id="client-search" 
-          placeholder="Buscar clientes..."
-          aria-label="Buscar clientes"
-        >
+        <input type="text" id="client-search" placeholder="Buscar clientes..." aria-label="Buscar clientes">
       </div>
 
-       Client List 
+      <!-- Client List -->
       <div class="client-list" id="client-list" role="list">
-         Populated by JS 
+        <!-- Populated by JS -->
       </div>
 
-       New Client Form 
+      <!-- New Client Form -->
       <div class="new-client-form">
         <h3>Novo Cliente</h3>
         <form id="new-client-form">
-          <input 
-            type="text" 
-            id="new-client-slug" 
-            placeholder="Ex: joana"
-            required
-            aria-label="Slug do cliente"
-          >
+          <input type="text" id="new-client-slug" placeholder="Ex: joana" required aria-label="Slug do cliente">
           <button type="submit" class="btn btn-primary">
             <i data-lucide="plus"></i>
             Criar Cliente
@@ -66,7 +55,7 @@
       </div>
     </aside>
 
-     Main Content 
+    <!-- Main Content -->
     <main class="main-content" id="main-content">
       <div class="empty-state" id="empty-state">
         <i data-lucide="users"></i>
@@ -74,12 +63,12 @@
       </div>
 
       <div class="client-view" id="client-view" style="display: none;">
-         Client Header 
+        <!-- Client Header -->
         <div class="client-header">
           <h2 id="client-title">Cliente</h2>
         </div>
 
-         KPI Cards 
+        <!-- KPI Cards -->
         <div class="kpi-grid">
           <div class="kpi-card">
             <div class="kpi-icon" style="background: var(--accent);">
@@ -90,6 +79,7 @@
               <div class="kpi-value" id="kpi-totais">0</div>
             </div>
           </div>
+
           <div class="kpi-card">
             <div class="kpi-icon" style="background: var(--accent);">
               <i data-lucide="check-circle"></i>
@@ -99,15 +89,7 @@
               <div class="kpi-value" id="kpi-enviados">0</div>
             </div>
           </div>
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background: var(--warning);">
-              <i data-lucide="clock"></i>
-            </div>
-            <div class="kpi-content">
-              <div class="kpi-label">Pendentes</div>
-              <div class="kpi-value" id="kpi-pendentes">0</div>
-            </div>
-          </div>
+
           <div class="kpi-card">
             <div class="kpi-icon" style="background: var(--accent);">
               <i data-lucide="list"></i>
@@ -119,7 +101,7 @@
           </div>
         </div>
 
-         Tabs 
+        <!-- Tabs -->
         <div class="tabs">
           <button class="tab active" data-tab="queue">
             <i data-lucide="list"></i>
@@ -139,16 +121,12 @@
           </button>
         </div>
 
-         Tab Content: Queue 
+        <!-- Tab Content: Queue -->
         <div class="tab-content active" id="tab-queue">
           <div class="table-controls">
             <div class="search-box">
               <i data-lucide="search"></i>
-              <input 
-                type="text" 
-                id="queue-search" 
-                placeholder="Buscar na fila..."
-              >
+              <input type="text" id="queue-search" placeholder="Buscar na fila...">
             </div>
           </div>
 
@@ -162,7 +140,7 @@
                 </tr>
               </thead>
               <tbody id="queue-table-body">
-                 Populated by JS 
+                <!-- Populated by JS -->
               </tbody>
             </table>
           </div>
@@ -178,16 +156,12 @@
           </div>
         </div>
 
-         Tab Content: Totals 
+        <!-- Tab Content: Totals -->
         <div class="tab-content" id="tab-totals">
           <div class="table-controls">
             <div class="search-box">
               <i data-lucide="search"></i>
-              <input 
-                type="text" 
-                id="totals-search" 
-                placeholder="Buscar no histórico..."
-              >
+              <input type="text" id="totals-search" placeholder="Buscar no histórico...">
             </div>
             <select id="totals-filter" class="filter-select">
               <option value="all">Todos</option>
@@ -208,7 +182,7 @@
                 </tr>
               </thead>
               <tbody id="totals-table-body">
-                 Populated by JS 
+                <!-- Populated by JS -->
               </tbody>
             </table>
           </div>
@@ -224,36 +198,22 @@
           </div>
         </div>
 
-         Tab Content: Add Contact 
+        <!-- Tab Content: Add Contact -->
         <div class="tab-content" id="tab-add-contact">
           <div class="form-card">
             <h3>Adicionar Novo Contato</h3>
             <form id="add-contact-form">
               <div class="form-group">
                 <label for="contact-name">Nome</label>
-                <input 
-                  type="text" 
-                  id="contact-name" 
-                  required
-                  placeholder="Nome do contato"
-                >
+                <input type="text" id="contact-name" required placeholder="Nome do contato">
               </div>
               <div class="form-group">
                 <label for="contact-phone">Telefone</label>
-                <input 
-                  type="tel" 
-                  id="contact-phone" 
-                  required
-                  placeholder="(00) 00000-0000"
-                >
+                <input type="tel" id="contact-phone" required placeholder="(00) 00000-0000">
               </div>
               <div class="form-group">
                 <label for="contact-niche">Nicho (opcional)</label>
-                <input 
-                  type="text" 
-                  id="contact-niche" 
-                  placeholder="Ex: Tecnologia"
-                >
+                <input type="text" id="contact-niche" placeholder="Ex: Tecnologia">
               </div>
               <button type="submit" class="btn btn-primary">
                 <i data-lucide="user-plus"></i>
@@ -263,11 +223,10 @@
           </div>
         </div>
 
-         Tab Content: Import CSV 
+        <!-- Tab Content: Import CSV -->
         <div class="tab-content" id="tab-import-csv">
           <div class="form-card">
             <h3>Importar Contatos via CSV</h3>
-            
             <div class="import-actions">
               <button id="download-template" class="btn btn-secondary">
                 <i data-lucide="download"></i>
@@ -279,12 +238,7 @@
               <div class="form-group">
                 <label for="csv-file">Arquivo CSV</label>
                 <div class="file-input-wrapper">
-                  <input 
-                    type="file" 
-                    id="csv-file" 
-                    accept=".csv"
-                    required
-                  >
+                  <input type="file" id="csv-file" accept=".csv" required>
                   <div class="file-input-display">
                     <i data-lucide="upload"></i>
                     <span id="file-name">Selecione um arquivo CSV</span>
@@ -320,7 +274,7 @@
     </main>
   </div>
 
-   Modal for Queue Actions 
+  <!-- Modal for Queue Actions -->
   <div class="modal" id="queue-action-modal" role="dialog" aria-modal="true">
     <div class="modal-content">
       <div class="modal-header">
@@ -345,10 +299,10 @@
     </div>
   </div>
 
-   Toast Container 
+  <!-- Toast Container -->
   <div class="toast-container" id="toast-container" aria-live="polite"></div>
 
-   Loading Overlay 
+  <!-- Loading Overlay -->
   <div class="loading-overlay" id="loading-overlay" style="display: none;">
     <div class="spinner"></div>
   </div>
