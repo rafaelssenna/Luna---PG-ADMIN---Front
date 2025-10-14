@@ -1,7 +1,8 @@
+// Updated App.js with HUD reposition to right corner
 // Configuration
 const API_BASE_URL = (window.API_BASE_URL !== undefined ? window.API_BASE_URL : "");
 
-// ====== Novos: Automação no front ======
+// ====== Novos: AutomaÃ§Ã£o no front ======
 const AUTO_INTERVAL_MS = 30000; // 30s
 const HUD_POLL_MS = 5000; // 5s para atualizar progresso quando loop estiver "running"
 const autoTimers = {}; // { [slug]: intervalId }
@@ -143,7 +144,7 @@ async function api(path, options = {}) {
     hideLoading();
   }
 }
-// Versão silenciosa (não mostra overlay nem toast) — para polling do HUD
+// VersÃ£o silenciosa (nÃ£o mostra overlay nem toast) â€” para polling do HUD
 async function apiSilent(path, options = {}) {
   try {
     const url = `${API_BASE_URL}${path}`;
@@ -163,7 +164,7 @@ async function apiSilent(path, options = {}) {
   }
 }
 
-// ====== Configurações no Servidor ======
+// ====== ConfiguraÃ§Ãµes no Servidor ======
 async function loadServerSettings(slug) {
   return api(`/api/client-settings?client=${slug}`);
 }
@@ -243,7 +244,7 @@ function normalizeSlug(input) {
   if (!slug.startsWith("cliente_")) slug = `cliente_${slug}`;
   const validPattern = /^cliente_[a-z0-9_]+$/;
   if (!validPattern.test(slug)) {
-    throw new Error("Slug inválido. Use apenas letras minúsculas, números e underscores.");
+    throw new Error("Slug invÃ¡lido. Use apenas letras minÃºsculas, nÃºmeros e underscores.");
   }
   return slug;
 }
@@ -268,12 +269,15 @@ function escapeAttr(s) {
   return String(s ?? "").replace(/"/g, "&quot;");
 }
 
-// ====== NOVOS: HUD do Loop (injetado no topo direito) ======
+// ====== NOVOS: HUD do Loop (injetado no canto direito) ======
 function injectLoopHudOnce() {
   if (document.getElementById("loop-hud")) return;
-  const header = document.querySelector(".client-header");
-  if (!header) return;
-
+  const clientView = document.querySelector(".client-view");
+  if (!clientView) return;
+  // cria wrapper absoluto dentro de client-view
+  const wrapper = document.createElement("div");
+  wrapper.id = "loop-hud-wrapper";
+  // cria hud propriamente dito
   const hud = document.createElement("div");
   hud.id = "loop-hud";
   hud.className = "loop-hud";
@@ -287,11 +291,12 @@ function injectLoopHudOnce() {
       <div class="hud-bar-fill" id="hud-bar-fill"></div>
     </div>
     <div class="hud-meta">
-      <span class="last" id="hud-last">Último envio: —</span>
+      <span class="last" id="hud-last">Ãšltimo envio: â€”</span>
       <span id="hud-now"></span>
     </div>
   `;
-  header.appendChild(hud);
+  wrapper.appendChild(hud);
+  clientView.appendChild(wrapper);
 }
 
 function renderLoopHud() {
@@ -311,24 +316,23 @@ function renderLoopHud() {
   pctEl.textContent = `${progress}%`;
   barEl.style.width = `${progress}%`;
 
-  // Animação da barra quando loop ativo
+  // AnimaÃ§Ã£o da barra quando loop ativo
   const running = (state.settings?.loopStatus || "idle") === "running";
   indEl.classList.toggle("active", running);
   barEl.classList.toggle("active", running);
 
-  // Último envio
-  // 1) Preferência: campos vindos do backend (quando acrescentarmos no server)
+  // Ãšltimo envio
   const k = state.kpis || {};
   let lastName = k.last_sent_name || state.lastSent?.name || null;
   let lastPhone = k.last_sent_phone || state.lastSent?.phone || null;
   let lastAt = k.last_sent_at || state.lastSent?.at || null;
 
   const lastStr = (lastName || lastPhone)
-    ? `${lastName ? lastName : ""}${lastName && lastPhone ? " – " : ""}${lastPhone ? lastPhone : ""} ${lastAt ? "– " + formatShortTime(lastAt) : ""}`
-    : "—";
-  lastEl.textContent = `Último envio: ${lastStr}`;
+    ? `${lastName ? lastName : ""}${lastName && lastPhone ? " â€“ " : ""}${lastPhone ? lastPhone : ""} ${lastAt ? "â€“ " + formatShortTime(lastAt) : ""}`
+    : "â€”";
+  lastEl.textContent = `Ãšltimo envio: ${lastStr}`;
 
-  // Relógio no canto (hora atual)
+  // RelÃ³gio no canto (hora atual)
   nowEl.textContent = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
 
@@ -339,9 +343,9 @@ function startHudPolling() {
       if (!state.selected) return;
       const stats = await apiSilent(`/api/stats?client=${state.selected}`);
       if (stats) {
-        // Se o backend já enviar last_sent_*, usamos
+        // Se o backend jÃ¡ enviar last_sent_*, usamos
         state.kpis = { ...state.kpis, ...stats };
-        renderKPIs(); // mantém KPIs sincronizados
+        renderKPIs(); // mantÃ©m KPIs sincronizados
       }
       renderLoopHud();
     } catch (e) {
@@ -382,34 +386,34 @@ function injectConfigTabOnce() {
   content.className = "tab-content";
   content.innerHTML = `
     <div class="form-card">
-      <h3>Configurações do Cliente</h3>
+      <h3>ConfiguraÃ§Ãµes do Cliente</h3>
 
       <div class="checkbox-group">
         <label>
           <input type="checkbox" id="auto-run-toggle">
-          <span>Execução automática do loop</span>
+          <span>ExecuÃ§Ã£o automÃ¡tica do loop</span>
         </label>
       </div>
 
       <div class="checkbox-group" style="margin-top:.5rem;">
         <label>
           <input type="checkbox" id="ia-auto-toggle">
-          <span>IA automática</span>
+          <span>IA automÃ¡tica</span>
         </label>
       </div>
 
       <div class="form-group" style="margin-top:1rem;">
-        <label for="instance-url">Instância (URL de envio da IA)</label>
+        <label for="instance-url">InstÃ¢ncia (URL de envio da IA)</label>
         <input type="url" id="instance-url" placeholder="https://minha-instancia.exemplo/send/text">
       </div>
 
       <div class="form-group" style="margin-top:.5rem;">
-        <label for="instance-token">Token da Instância</label>
-        <input type="text" id="instance-token" placeholder="cole o token da instância aqui">
+        <label for="instance-token">Token da InstÃ¢ncia</label>
+        <input type="text" id="instance-token" placeholder="cole o token da instÃ¢ncia aqui">
       </div>
 
       <div class="form-group" style="margin-top:.5rem;">
-        <label for="instance-header">Cabeçalho do Token</label>
+        <label for="instance-header">CabeÃ§alho do Token</label>
         <input type="text" id="instance-header" placeholder="token ou Authorization" value="token">
       </div>
 
@@ -427,7 +431,7 @@ function injectConfigTabOnce() {
           <i data-lucide="play-circle"></i>
           <span>Executar Agora</span>
         </button>
-        <button id="delete-client" class="btn btn-danger" title="Apagar tabelas e configurações deste cliente">
+        <button id="delete-client" class="btn btn-danger" title="Apagar tabelas e configuraÃ§Ãµes deste cliente">
           <i data-lucide="trash-2"></i>
           <span>Apagar Tabela</span>
         </button>
@@ -460,28 +464,28 @@ function injectConfigTabOnce() {
     renderSettings();
     renderLoopHud();
     applyHudPolling();
-    showToast("Configurações salvas", "success");
+    showToast("ConfiguraÃ§Ãµes salvas", "success");
   });
 
   document.getElementById("run-now").addEventListener("click", () => {
     runLoop(state.selected);
   });
 
-  // Botão Apagar Tabela (com dupla confirmação e limpeza do estado local)
+  // BotÃ£o Apagar Tabela (com dupla confirmaÃ§Ã£o e limpeza do estado local)
   document.getElementById("delete-client").addEventListener("click", async () => {
     try {
       const slug = state.selected;
       if (!slug) return;
 
       const confirm1 = window.confirm(
-        `Tem certeza que deseja APAGAR as tabelas "${slug}" e "${slug}_totais" e remover as configurações deste cliente?\n\n` +
-        `Esta ação NÃO pode ser desfeita.`
+        `Tem certeza que deseja APAGAR as tabelas "${slug}" e "${slug}_totais" e remover as configuraÃ§Ãµes deste cliente?\n\n` +
+        `Esta aÃ§Ã£o NÃƒO pode ser desfeita.`
       );
       if (!confirm1) return;
 
       const typed = window.prompt(`Para confirmar, digite o slug do cliente exatamente como abaixo:\n\n${slug}`);
       if (typed !== slug) {
-        showToast("Confirmação cancelada.", "warning");
+        showToast("ConfirmaÃ§Ã£o cancelada.", "warning");
         return;
       }
 
@@ -511,7 +515,7 @@ function injectConfigTabOnce() {
     } catch (e) {
       const msg = String(e?.message || "");
       if (msg.includes("HTTP 409")) {
-        showToast("Não é possível apagar enquanto o loop está em execução. Tente novamente em instantes.", "warning");
+        showToast("NÃ£o Ã© possÃ­vel apagar enquanto o loop estÃ¡ em execuÃ§Ã£o. Tente novamente em instantes.", "warning");
       } else {
         showToast("Falha ao apagar as tabelas do cliente", "error");
       }
@@ -549,7 +553,7 @@ function renderSettings() {
 
   const last = cfg.lastRunAt ? formatDate(cfg.lastRunAt) : "-";
   const st = cfg.loopStatus || "idle";
-  statusEl.textContent = `Status: ${st} | Última execução: ${last}`;
+  statusEl.textContent = `Status: ${st} | Ãšltima execuÃ§Ã£o: ${last}`;
 }
 // ==========================================
 
@@ -678,7 +682,7 @@ async function selectClient(slug) {
   document.getElementById("totals-search").value = "";
   document.getElementById("totals-filter").value = "all";
 
-  injectLoopHudOnce();     // garante HUD no topo direito
+  injectLoopHudOnce();
   injectConfigTabOnce();
 
   state.lastSent = loadLastSent(slug);
@@ -715,7 +719,7 @@ function renderKPIs() {
   if (pendEl) pendEl.textContent = state.kpis.pendentes || 0;
   if (filaEl) filaEl.textContent = state.kpis.fila || 0;
 
-  renderLoopHud(); // mantém HUD coerente com KPIs
+  renderLoopHud(); // mantÃ©m HUD coerente com KPIs
 }
 
 // Load Queue
@@ -767,7 +771,7 @@ function renderQueue() {
   }
 
   const totalPages = Math.ceil(state.queue.total / state.queue.pageSize);
-  document.getElementById("queue-page-info").textContent = `Página ${state.queue.page} de ${totalPages || 1} (${state.queue.total} itens)`;
+  document.getElementById("queue-page-info").textContent = `PÃ¡gina ${state.queue.page} de ${totalPages || 1} (${state.queue.total} itens)`;
   document.getElementById("queue-prev").disabled = state.queue.page === 1;
   document.getElementById("queue-next").disabled = state.queue.page >= totalPages;
 
@@ -818,12 +822,12 @@ function renderTotals() {
 
   const totalPages = Math.ceil(state.totals.total / state.totals.pageSize);
   document.getElementById("totals-page-info").textContent =
-    `Página ${state.totals.page} de ${totalPages || 1} (${state.totals.total} itens)`;
+    `PÃ¡gina ${state.totals.page} de ${totalPages || 1} (${state.totals.total} itens)`;
   document.getElementById("totals-prev").disabled = state.totals.page === 1;
   document.getElementById("totals-next").disabled = state.totals.page >= totalPages;
 }
 
-// ====== Ações de Fila (atualizadas para salvar "Último envio") ======
+// ====== AÃ§Ãµes de Fila (atualizadas para salvar "Ãšltimo envio") ======
 window.markAsSentFromBtn = async (btn) => {
   const phone = btn?.dataset?.phone;
   const name = btn?.dataset?.name || "";
@@ -837,7 +841,7 @@ window.markAsSent = async (phone, name = "") => {
       body: JSON.stringify({ client: state.selected, phone, markSent: true }),
     });
 
-    // Salva "Último envio" localmente (fallback até o backend devolver isso)
+    // Salva "Ãšltimo envio" localmente (fallback atÃ© o backend devolver isso)
     saveLastSent(state.selected, { name, phone, at: new Date().toISOString() });
 
     showToast("Contato marcado como enviado", "success");
@@ -857,7 +861,7 @@ window.markAsSent = async (phone, name = "") => {
   }
 };
 
-// Modal de Remover (mantido) + integração com "Último envio" quando checkbox marcado
+// Modal de Remover (mantido) + integraÃ§Ã£o com "Ãšltimo envio" quando checkbox marcado
 window.removeFromQueueFromBtn = (btn) => {
   const phone = btn?.dataset?.phone;
   const name = btn?.dataset?.name || "";
@@ -887,7 +891,7 @@ window.removeFromQueue = (phone) => {
         body: JSON.stringify({ client: state.selected, phone, markSent: checkbox.checked }),
       });
 
-      // Se marcou "enviada", salva "Último envio" com fallback local
+      // Se marcou "enviada", salva "Ãšltimo envio" com fallback local
       if (checkbox.checked && state.pendingQueueAction && state.pendingQueueAction.phone === phone) {
         saveLastSent(state.selected, {
           name: state.pendingQueueAction.name || "",
@@ -939,8 +943,8 @@ async function addContact(name, phone, niche) {
 
     const statusMessages = {
       inserted: "Contato adicionado com sucesso",
-      skipped_conflict: "Contato já existe (conflito de telefone)",
-      skipped_already_known: "Contato já conhecido no histórico",
+      skipped_conflict: "Contato jÃ¡ existe (conflito de telefone)",
+      skipped_already_known: "Contato jÃ¡ conhecido no histÃ³rico",
     };
 
     const message = statusMessages[response.status] || "Contato processado";
@@ -975,19 +979,19 @@ async function importCSV(file) {
     document.getElementById("import-skipped").textContent = result.skipped || 0;
     document.getElementById("import-errors").textContent = result.errors || 0;
 
-    showToast("Importação concluída", "success");
+    showToast("ImportaÃ§Ã£o concluÃ­da", "success");
     await loadClientData(state.selected);
     await loadClients();
   } catch (error) {
     hideLoading();
     console.error("[v0] Failed to import CSV:", error);
-    showToast(`Erro na importação: ${error.message}`, "error");
+    showToast(`Erro na importaÃ§Ã£o: ${error.message}`, "error");
   }
 }
 
 // Download CSV Template
 function downloadCSVTemplate() {
-  const csv = "name,phone,niche\nJoão Silva,11999999999,Tecnologia\nMaria Santos,11988888888,Saúde";
+  const csv = "name,phone,niche\nJoÃ£o Silva,11999999999,Tecnologia\nMaria Santos,11988888888,SaÃºde";
   const blob = new Blob([csv], { type: "text/csv" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
