@@ -278,7 +278,7 @@ function injectConfigTabOnce() {
         <input type="text" id="instance-scheme" placeholder="Bearer (ou deixe vazio)">
       </div>
 
-      <div style="margin-top:1rem; display:flex; gap:.5rem; align-items:center;">
+      <div style="margin-top:1rem; display:flex; gap:.5rem; align-items:center; flex-wrap: wrap;">
         <button id="save-settings" class="btn btn-primary">
           <i data-lucide="save"></i>
           <span>Salvar</span>
@@ -286,6 +286,10 @@ function injectConfigTabOnce() {
         <button id="run-now" class="btn btn-secondary">
           <i data-lucide="play-circle"></i>
           <span>Executar Agora</span>
+        </button>
+        <button id="delete-client" class="btn btn-danger" title="Apagar tabelas e configurações deste cliente">
+          <i data-lucide="trash-2"></i>
+          <span>Apagar Tabela</span>
         </button>
         <span id="settings-status" style="color: var(--muted); font-size:.9rem; margin-left:.25rem;"></span>
       </div>
@@ -318,6 +322,55 @@ function injectConfigTabOnce() {
   });
 
   document.getElementById("run-now").addEventListener("click", () => runLoop(state.selected));
+
+  // Botão Apagar Tabela (com dupla confirmação e limpeza do estado local)
+  document.getElementById("delete-client").addEventListener("click", async () => {
+    try {
+      const slug = state.selected;
+      if (!slug) return;
+
+      const confirm1 = window.confirm(
+        `Tem certeza que deseja APAGAR as tabelas "${slug}" e "${slug}_totais" e remover as configurações deste cliente?\n\n` +
+        `Esta ação NÃO pode ser desfeita.`
+      );
+      if (!confirm1) return;
+
+      const typed = window.prompt(`Para confirmar, digite o slug do cliente exatamente como abaixo:\n\n${slug}`);
+      if (typed !== slug) {
+        showToast("Confirmação cancelada.", "warning");
+        return;
+      }
+
+      await api("/api/delete-client", {
+        method: "DELETE",
+        body: JSON.stringify({ client: slug }),
+      });
+
+      // Limpa estado local e timers
+      stopAutoFor(slug);
+      localStorage.removeItem(settingsKey(slug));
+
+      showToast(`Tabelas de ${slug} apagadas com sucesso`, "success");
+
+      // Recarrega clientes e seleciona outro (ou mostra vazio)
+      await loadClients();
+      if (state.clients.length > 0) {
+        selectClient(state.clients[0].slug);
+      } else {
+        state.selected = null;
+        document.getElementById("client-view").style.display = "none";
+        document.getElementById("empty-state").style.display = "block";
+      }
+    } catch (e) {
+      const msg = String(e?.message || "");
+      if (msg.includes("HTTP 409")) {
+        showToast("Não é possível apagar enquanto o loop está em execução. Tente novamente em instantes.", "warning");
+      } else {
+        showToast("Falha ao apagar as tabelas do cliente", "error");
+      }
+      console.error("delete-client error:", e);
+    }
+  });
 
   if (window.lucide && typeof window.lucide.createIcons === "function") {
     window.lucide.createIcons();
