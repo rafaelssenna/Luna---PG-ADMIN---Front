@@ -288,11 +288,108 @@ body {
 
 .client-header {
   margin-bottom: 2rem;
+  position: relative; /* NOVO: para posicionar o HUD no canto direito */
 }
 
 .client-header h2 {
   font-size: 1.75rem;
   font-weight: 600;
+}
+
+/* =============== HUD do Loop (Progresso + Último envio) =============== */
+.loop-hud {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 360px;
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.9rem 0.85rem;
+  box-shadow: var(--shadow);
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 0.6rem 0.8rem;
+}
+
+.loop-hud .hud-indicator {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  align-self: center;
+  background: #475569;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45);
+  transition: all 0.4s ease;
+}
+
+.loop-hud .hud-indicator.active {
+  background: var(--accent);
+  animation: pulse-glow 1.6s infinite;
+}
+
+@keyframes pulse-glow {
+  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+  70% { box-shadow: 0 0 0 11px rgba(34, 197, 94, 0.0); }
+  100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.0); }
+}
+
+.loop-hud .hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.loop-hud .hud-title {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.loop-hud .hud-percent {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.loop-hud .hud-bar {
+  grid-column: 1 / span 2;
+  height: 10px;
+  background: #101826;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.loop-hud .hud-bar-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, #22c55e, #22a7c5);
+  background-size: 200% 100%;
+  transition: width 0.35s ease;
+}
+
+.loop-hud .hud-bar-fill.active {
+  animation: stripe-move 2.2s linear infinite;
+}
+
+@keyframes stripe-move {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+.loop-hud .hud-meta {
+  grid-column: 1 / span 2;
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  gap: .75rem;
+}
+
+.loop-hud .hud-meta .last {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* KPI Cards */
@@ -910,6 +1007,17 @@ body {
 }
 
 /* Responsive */
+@media (max-width: 992px) {
+  /* HUD vira bloco abaixo do título */
+  .loop-hud {
+    position: relative;
+    width: 100%;
+    margin-top: 0.75rem;
+    right: auto;
+    top: auto;
+  }
+}
+
 @media (max-width: 768px) {
   .layout {
     flex-direction: column;
