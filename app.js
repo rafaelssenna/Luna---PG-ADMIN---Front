@@ -3,10 +3,24 @@ const API_BASE_URL = (window.API_BASE_URL !== undefined ? window.API_BASE_URL : 
 
 // ====== Novos: Automação no front ======
 const AUTO_INTERVAL_MS = 30000; // 30s
+const HUD_POLL_MS = 5000; // 5s para atualizar progresso quando loop estiver "running"
 const autoTimers = {}; // { [slug]: intervalId }
 
 function settingsKey(slug) {
   return `luna_pg_client_settings__${slug}`;
+}
+function lastSentKey(slug) {
+  return `luna_pg_last_sent__${slug}`;
+}
+function loadLastSent(slug) {
+  try { return JSON.parse(localStorage.getItem(lastSentKey(slug))) || null; } catch { return null; }
+}
+function saveLastSent(slug, obj) {
+  try { localStorage.setItem(lastSentKey(slug), JSON.stringify(obj)); } catch {}
+  if (state.selected === slug) {
+    state.lastSent = obj;
+    renderLoopHud();
+  }
 }
 function loadLocalSettings(slug) {
   try {
@@ -86,7 +100,7 @@ const state = {
   queue: { items: [], page: 1, total: 0, pageSize: 25, search: "" },
   totals: { items: [], page: 1, total: 0, pageSize: 25, search: "", sent: "all" },
   kpis: { totais: 0, enviados: 0, pendentes: 0, fila: 0 },
-  // Novos: espelho do localStorage por cliente
+  // Novos
   settings: {
     autoRun: false,
     iaAuto: false,
@@ -95,10 +109,14 @@ const state = {
     instanceAuthHeader: "token",
     instanceAuthScheme: "",
     lastRunAt: null,
+    loopStatus: "idle",
   },
+  lastSent: null, // {name, phone, at}
+  hudTimer: null, // polling do HUD
+  pendingQueueAction: null, // usado no modal de remover
 };
 
-// ====== API Helper ======
+// ====== API Helpers ======
 async function api(path, options = {}) {
   showLoading();
   try {
@@ -123,6 +141,25 @@ async function api(path, options = {}) {
     throw error;
   } finally {
     hideLoading();
+  }
+}
+// Versão silenciosa (não mostra overlay nem toast) — para polling do HUD
+async function apiSilent(path, options = {}) {
+  try {
+    const url = `${API_BASE_URL}${path}`;
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    return await response.json();
+  } catch (err) {
+    // silencioso, apenas loga
+    console.debug("[silent] API error:", err.message);
+    return null;
   }
 }
 
@@ -159,10 +196,12 @@ async function syncSettingsFromServer(slug) {
     state.settings = { ...next, loopStatus: s.loopStatus || "idle" };
     renderSettings();
     applyAutoState(slug);
+    applyHudPolling(); // iniciar/parar polling do HUD conforme status
   } catch (e) {
     state.settings = loadLocalSettings(slug);
     renderSettings();
     applyAutoState(slug);
+    applyHudPolling();
   }
 }
 
@@ -219,6 +258,107 @@ function formatDate(dateString) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+function formatShortTime(dateString) {
+  if (!dateString) return "-";
+  const date = new Date(dateString);
+  return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+function escapeAttr(s) {
+  return String(s ?? "").replace(/"/g, "&quot;");
+}
+
+// ====== NOVOS: HUD do Loop (injetado no topo direito) ======
+function injectLoopHudOnce() {
+  if (document.getElementById("loop-hud")) return;
+  const header = document.querySelector(".client-header");
+  if (!header) return;
+
+  const hud = document.createElement("div");
+  hud.id = "loop-hud";
+  hud.className = "loop-hud";
+  hud.innerHTML = `
+    <div class="hud-indicator" id="hud-indicator" title="Status do loop"></div>
+    <div class="hud-header">
+      <span class="hud-title">Progresso</span>
+      <span class="hud-percent" id="hud-percent">0%</span>
+    </div>
+    <div class="hud-bar">
+      <div class="hud-bar-fill" id="hud-bar-fill"></div>
+    </div>
+    <div class="hud-meta">
+      <span class="last" id="hud-last">Último envio: —</span>
+      <span id="hud-now"></span>
+    </div>
+  `;
+  header.appendChild(hud);
+}
+
+function renderLoopHud() {
+  injectLoopHudOnce();
+  const pctEl = document.getElementById("hud-percent");
+  const barEl = document.getElementById("hud-bar-fill");
+  const lastEl = document.getElementById("hud-last");
+  const nowEl = document.getElementById("hud-now");
+  const indEl = document.getElementById("hud-indicator");
+
+  if (!pctEl || !barEl || !lastEl || !nowEl || !indEl) return;
+
+  const totais = Number(state.kpis.totais || 0);
+  const enviados = Number(state.kpis.enviados || 0);
+  const progress = totais > 0 ? Math.round((enviados / totais) * 100) : 0;
+
+  pctEl.textContent = `${progress}%`;
+  barEl.style.width = `${progress}%`;
+
+  // Animação da barra quando loop ativo
+  const running = (state.settings?.loopStatus || "idle") === "running";
+  indEl.classList.toggle("active", running);
+  barEl.classList.toggle("active", running);
+
+  // Último envio
+  // 1) Preferência: campos vindos do backend (quando acrescentarmos no server)
+  const k = state.kpis || {};
+  let lastName = k.last_sent_name || state.lastSent?.name || null;
+  let lastPhone = k.last_sent_phone || state.lastSent?.phone || null;
+  let lastAt = k.last_sent_at || state.lastSent?.at || null;
+
+  const lastStr = (lastName || lastPhone)
+    ? `${lastName ? lastName : ""}${lastName && lastPhone ? " – " : ""}${lastPhone ? lastPhone : ""} ${lastAt ? "– " + formatShortTime(lastAt) : ""}`
+    : "—";
+  lastEl.textContent = `Último envio: ${lastStr}`;
+
+  // Relógio no canto (hora atual)
+  nowEl.textContent = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function startHudPolling() {
+  stopHudPolling();
+  state.hudTimer = setInterval(async () => {
+    try {
+      if (!state.selected) return;
+      const stats = await apiSilent(`/api/stats?client=${state.selected}`);
+      if (stats) {
+        // Se o backend já enviar last_sent_*, usamos
+        state.kpis = { ...state.kpis, ...stats };
+        renderKPIs(); // mantém KPIs sincronizados
+      }
+      renderLoopHud();
+    } catch (e) {
+      console.debug("HUD polling erro:", e?.message || e);
+    }
+  }, HUD_POLL_MS);
+}
+function stopHudPolling() {
+  if (state.hudTimer) {
+    clearInterval(state.hudTimer);
+    state.hudTimer = null;
+  }
+}
+function applyHudPolling() {
+  const running = (state.settings?.loopStatus || "idle") === "running";
+  if (running) startHudPolling();
+  else stopHudPolling();
 }
 
 // ====== NOVOS: Aba Config (injetada) ======
@@ -318,10 +458,14 @@ function injectConfigTabOnce() {
     state.settings = next;
     applyAutoState(state.selected);
     renderSettings();
+    renderLoopHud();
+    applyHudPolling();
     showToast("Configurações salvas", "success");
   });
 
-  document.getElementById("run-now").addEventListener("click", () => runLoop(state.selected));
+  document.getElementById("run-now").addEventListener("click", () => {
+    runLoop(state.selected);
+  });
 
   // Botão Apagar Tabela (com dupla confirmação e limpeza do estado local)
   document.getElementById("delete-client").addEventListener("click", async () => {
@@ -349,6 +493,9 @@ function injectConfigTabOnce() {
       // Limpa estado local e timers
       stopAutoFor(slug);
       localStorage.removeItem(settingsKey(slug));
+      localStorage.removeItem(lastSentKey(slug));
+      state.lastSent = null;
+      stopHudPolling();
 
       showToast(`Tabelas de ${slug} apagadas com sucesso`, "success");
 
@@ -423,6 +570,8 @@ async function runLoop(clientSlug) {
       state.settings = { ...state.settings, loopStatus: serv.loopStatus || state.settings.loopStatus || "idle" };
     } catch {}
     renderSettings();
+    renderLoopHud();
+    applyHudPolling();
 
     showToast(`Loop iniciado para ${slug}`, "success");
 
@@ -529,10 +678,15 @@ async function selectClient(slug) {
   document.getElementById("totals-search").value = "";
   document.getElementById("totals-filter").value = "all";
 
+  injectLoopHudOnce();     // garante HUD no topo direito
   injectConfigTabOnce();
+
+  state.lastSent = loadLastSent(slug);
+  renderLoopHud();
 
   await loadClientData(slug);
   await syncSettingsFromServer(slug);
+  applyHudPolling();
 }
 
 // Load Client Data
@@ -541,6 +695,7 @@ async function loadClientData(slug) {
     const stats = await api(`/api/stats?client=${slug}`);
     state.kpis = stats;
     renderKPIs();
+    renderLoopHud();
 
     await loadQueue();
     await loadTotals();
@@ -559,6 +714,8 @@ function renderKPIs() {
   if (enviadosEl) enviadosEl.textContent = state.kpis.enviados || 0;
   if (pendEl) pendEl.textContent = state.kpis.pendentes || 0;
   if (filaEl) filaEl.textContent = state.kpis.fila || 0;
+
+  renderLoopHud(); // mantém HUD coerente com KPIs
 }
 
 // Load Queue
@@ -582,26 +739,30 @@ function renderQueue() {
     tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--muted);">Nenhum contato na fila</td></tr>';
   } else {
     tbody.innerHTML = state.queue.items
-      .map(
-        (item) => `
+      .map((item) => `
       <tr>
         <td>${item.name || "-"}</td>
         <td>${item.phone || "-"}</td>
         <td>
           <div class="table-actions">
-            <button class="btn btn-sm btn-primary" onclick="markAsSent('${item.phone}')">
+            <button class="btn btn-sm btn-primary"
+                    data-phone="${escapeAttr(item.phone)}"
+                    data-name="${escapeAttr(item.name || "")}"
+                    onclick="markAsSentFromBtn(this)">
               <i data-lucide="check"></i>
               Marcar Enviada
             </button>
-            <button class="btn btn-sm btn-danger" onclick="removeFromQueue('${item.phone}')">
+            <button class="btn btn-sm btn-danger"
+                    data-phone="${escapeAttr(item.phone)}"
+                    data-name="${escapeAttr(item.name || "")}"
+                    onclick="removeFromQueueFromBtn(this)">
               <i data-lucide="trash-2"></i>
               Remover
             </button>
           </div>
         </td>
       </tr>
-    `
-      )
+    `)
       .join("");
   }
 
@@ -609,6 +770,10 @@ function renderQueue() {
   document.getElementById("queue-page-info").textContent = `Página ${state.queue.page} de ${totalPages || 1} (${state.queue.total} itens)`;
   document.getElementById("queue-prev").disabled = state.queue.page === 1;
   document.getElementById("queue-next").disabled = state.queue.page >= totalPages;
+
+  if (window.lucide && typeof window.lucide.createIcons === "function") {
+    window.lucide.createIcons();
+  }
 }
 
 // Load Totals
@@ -658,13 +823,23 @@ function renderTotals() {
   document.getElementById("totals-next").disabled = state.totals.page >= totalPages;
 }
 
-// Mark as Sent
-window.markAsSent = async (phone) => {
+// ====== Ações de Fila (atualizadas para salvar "Último envio") ======
+window.markAsSentFromBtn = async (btn) => {
+  const phone = btn?.dataset?.phone;
+  const name = btn?.dataset?.name || "";
+  await window.markAsSent(phone, name);
+};
+
+window.markAsSent = async (phone, name = "") => {
   try {
     await api("/api/queue", {
       method: "DELETE",
       body: JSON.stringify({ client: state.selected, phone, markSent: true }),
     });
+
+    // Salva "Último envio" localmente (fallback até o backend devolver isso)
+    saveLastSent(state.selected, { name, phone, at: new Date().toISOString() });
+
     showToast("Contato marcado como enviado", "success");
     state.totals.sent = "all";
     await Promise.all([
@@ -682,7 +857,15 @@ window.markAsSent = async (phone) => {
   }
 };
 
-// Remove from Queue
+// Modal de Remover (mantido) + integração com "Último envio" quando checkbox marcado
+window.removeFromQueueFromBtn = (btn) => {
+  const phone = btn?.dataset?.phone;
+  const name = btn?.dataset?.name || "";
+  state.pendingQueueAction = { phone, name };
+  window.removeFromQueue(phone);
+};
+
+// Remove from Queue (abre modal)
 window.removeFromQueue = (phone) => {
   const modal = document.getElementById("queue-action-modal");
   const checkboxGroup = document.getElementById("mark-sent-checkbox");
@@ -703,6 +886,17 @@ window.removeFromQueue = (phone) => {
         method: "DELETE",
         body: JSON.stringify({ client: state.selected, phone, markSent: checkbox.checked }),
       });
+
+      // Se marcou "enviada", salva "Último envio" com fallback local
+      if (checkbox.checked && state.pendingQueueAction && state.pendingQueueAction.phone === phone) {
+        saveLastSent(state.selected, {
+          name: state.pendingQueueAction.name || "",
+          phone,
+          at: new Date().toISOString(),
+        });
+      }
+      state.pendingQueueAction = null;
+
       showToast("Contato removido da fila", "success");
       modal.classList.remove("active");
       if (checkbox.checked) state.totals.sent = "all";
@@ -805,6 +999,7 @@ function downloadCSVTemplate() {
 
 // Event Listeners
 document.addEventListener("DOMContentLoaded", () => {
+  injectLoopHudOnce();
   injectConfigTabOnce();
 
   const lucide = window.lucide;
@@ -815,6 +1010,8 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.selected) {
       await loadClientData(state.selected);
       await syncSettingsFromServer(state.selected);
+      renderLoopHud();
+      applyHudPolling();
     }
   });
 
@@ -921,5 +1118,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
   window.addEventListener("beforeunload", () => {
     Object.keys(autoTimers).forEach((slug) => stopAutoFor(slug));
+    stopHudPolling();
   });
 });
