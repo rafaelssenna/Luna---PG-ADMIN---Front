@@ -1,11 +1,8 @@
 // Configuration
-// Se você estiver executando o front-end e o back-end no mesmo domínio (ex.: Railway ou Vercel),
-// deixe a URL base vazia para que as chamadas usem a mesma origem. Caso contrário, defina a
-// variável de ambiente API_BASE_URL no HTML ou no window antes de carregar este script.
 const API_BASE_URL = (window.API_BASE_URL !== undefined ? window.API_BASE_URL : "");
 
 // ====== Novos: Automação no front ======
-const AUTO_INTERVAL_MS = 30000; // 30s (ajuste se quiser)
+const AUTO_INTERVAL_MS = 30000; // 30s
 const autoTimers = {}; // { [slug]: intervalId }
 
 function settingsKey(slug) {
@@ -17,10 +14,21 @@ function loadLocalSettings(slug) {
       autoRun: false,
       iaAuto: false,
       instanceUrl: "",
+      instanceToken: "",
+      instanceAuthHeader: "token",
+      instanceAuthScheme: "",
       lastRunAt: null,
     };
   } catch {
-    return { autoRun: false, iaAuto: false, instanceUrl: "", lastRunAt: null };
+    return {
+      autoRun: false,
+      iaAuto: false,
+      instanceUrl: "",
+      instanceToken: "",
+      instanceAuthHeader: "token",
+      instanceAuthScheme: "",
+      lastRunAt: null,
+    };
   }
 }
 function saveLocalSettings(slug, partial) {
@@ -33,12 +41,10 @@ function startAutoFor(slug) {
   autoTimers[slug] = setInterval(async () => {
     try {
       const { iaAuto } = loadLocalSettings(slug);
-      // O backend ignora campos extras; enviamos iaAuto para futura compatibilidade
       await api("/api/loop", {
         method: "POST",
         body: JSON.stringify({ client: slug, iaAuto }),
       });
-      // Atualiza status e telas
       if (state.selected === slug) {
         const iso = new Date().toISOString();
         state.settings = saveLocalSettings(slug, { lastRunAt: iso });
@@ -80,8 +86,16 @@ const state = {
   queue: { items: [], page: 1, total: 0, pageSize: 25, search: "" },
   totals: { items: [], page: 1, total: 0, pageSize: 25, search: "", sent: "all" },
   kpis: { totais: 0, enviados: 0, pendentes: 0, fila: 0 },
-  // Novos: espelho do que fica no localStorage por cliente
-  settings: { autoRun: false, iaAuto: false, instanceUrl: "", lastRunAt: null },
+  // Novos: espelho do localStorage por cliente
+  settings: {
+    autoRun: false,
+    iaAuto: false,
+    instanceUrl: "",
+    instanceToken: "",
+    instanceAuthHeader: "token",
+    instanceAuthScheme: "",
+    lastRunAt: null,
+  },
 };
 
 // ====== API Helper ======
@@ -116,7 +130,7 @@ async function api(path, options = {}) {
 async function loadServerSettings(slug) {
   return api(`/api/client-settings?client=${slug}`);
 }
-async function saveServerSettings(slug, { autoRun, iaAuto, instanceUrl }) {
+async function saveServerSettings(slug, { autoRun, iaAuto, instanceUrl, instanceToken, instanceAuthHeader, instanceAuthScheme }) {
   return api(`/api/client-settings`, {
     method: "POST",
     body: JSON.stringify({
@@ -124,25 +138,28 @@ async function saveServerSettings(slug, { autoRun, iaAuto, instanceUrl }) {
       autoRun: !!autoRun,
       iaAuto: !!iaAuto,
       instanceUrl: instanceUrl || null,
+      instanceToken: instanceToken || null,
+      instanceAuthHeader: (instanceAuthHeader || "token"),
+      instanceAuthScheme: (instanceAuthScheme ?? ""),
     }),
   });
 }
 async function syncSettingsFromServer(slug) {
   try {
     const s = await loadServerSettings(slug);
-    // Salva apenas as preferências persistidas (autoRun, iaAuto, instanceUrl, lastRunAt) no localStorage
     const next = saveLocalSettings(slug, {
       autoRun: !!s.autoRun,
       iaAuto: !!s.iaAuto,
       instanceUrl: s.instanceUrl || "",
+      instanceToken: s.instanceToken || "",
+      instanceAuthHeader: s.instanceAuthHeader || "token",
+      instanceAuthScheme: s.instanceAuthScheme || "",
       lastRunAt: s.lastRunAt || null,
     });
-    // Replica o status do loop retornado pelo servidor no estado (não persistimos no localStorage)
     state.settings = { ...next, loopStatus: s.loopStatus || "idle" };
     renderSettings();
     applyAutoState(slug);
   } catch (e) {
-    // Falhou? segue com localStorage
     state.settings = loadLocalSettings(slug);
     renderSettings();
     applyAutoState(slug);
@@ -206,7 +223,6 @@ function formatDate(dateString) {
 
 // ====== NOVOS: Aba Config (injetada) ======
 function injectConfigTabOnce() {
-  // Se já existe, não injeta de novo
   if (document.querySelector('.tab[data-tab="config"]') && document.getElementById("tab-config")) {
     return;
   }
@@ -215,14 +231,12 @@ function injectConfigTabOnce() {
   const clientView = document.getElementById("client-view");
   if (!tabs || !clientView) return;
 
-  // Botão da aba
   const btn = document.createElement("button");
   btn.className = "tab";
   btn.dataset.tab = "config";
   btn.innerHTML = `<i data-lucide="settings"></i>Config`;
   tabs.appendChild(btn);
 
-  // Conteúdo da aba
   const content = document.createElement("div");
   content.id = "tab-config";
   content.className = "tab-content";
@@ -246,7 +260,22 @@ function injectConfigTabOnce() {
 
       <div class="form-group" style="margin-top:1rem;">
         <label for="instance-url">Instância (URL de envio da IA)</label>
-        <input type="url" id="instance-url" placeholder="https://minha-instancia.exemplo/send">
+        <input type="url" id="instance-url" placeholder="https://minha-instancia.exemplo/send/text">
+      </div>
+
+      <div class="form-group" style="margin-top:.5rem;">
+        <label for="instance-token">Token da Instância</label>
+        <input type="text" id="instance-token" placeholder="cole o token da instância aqui">
+      </div>
+
+      <div class="form-group" style="margin-top:.5rem;">
+        <label for="instance-header">Cabeçalho do Token</label>
+        <input type="text" id="instance-header" placeholder="token ou Authorization" value="token">
+      </div>
+
+      <div class="form-group" style="margin-top:.5rem;">
+        <label for="instance-scheme">Esquema (opcional)</label>
+        <input type="text" id="instance-scheme" placeholder="Bearer (ou deixe vazio)">
       </div>
 
       <div style="margin-top:1rem; display:flex; gap:.5rem; align-items:center;">
@@ -264,7 +293,6 @@ function injectConfigTabOnce() {
   `;
   clientView.appendChild(content);
 
-  // Navegação da aba (sem depender do bind inicial)
   btn.addEventListener("click", () => {
     document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
     btn.classList.add("active");
@@ -272,12 +300,14 @@ function injectConfigTabOnce() {
     document.getElementById("tab-config").classList.add("active");
   });
 
-  // Ações
   document.getElementById("save-settings").addEventListener("click", async () => {
     const values = {
       autoRun: document.getElementById("auto-run-toggle").checked,
       iaAuto: document.getElementById("ia-auto-toggle").checked,
       instanceUrl: document.getElementById("instance-url").value.trim(),
+      instanceToken: document.getElementById("instance-token").value.trim(),
+      instanceAuthHeader: document.getElementById("instance-header").value.trim() || "token",
+      instanceAuthScheme: document.getElementById("instance-scheme").value.trim(),
     };
     try { await saveServerSettings(state.selected, values); } catch {}
     const next = saveLocalSettings(state.selected, values);
@@ -289,33 +319,41 @@ function injectConfigTabOnce() {
 
   document.getElementById("run-now").addEventListener("click", () => runLoop(state.selected));
 
-  // Render ícones dessa aba
   if (window.lucide && typeof window.lucide.createIcons === "function") {
     window.lucide.createIcons();
   }
 }
 
 function renderSettings() {
-  // Se a aba ainda não existe, não faz nada
   const autoEl = document.getElementById("auto-run-toggle");
   const iaEl = document.getElementById("ia-auto-toggle");
   const instanceEl = document.getElementById("instance-url");
+  const tokenEl = document.getElementById("instance-token");
+  const headerEl = document.getElementById("instance-header");
+  const schemeEl = document.getElementById("instance-scheme");
   const statusEl = document.getElementById("settings-status");
   if (!autoEl || !iaEl || !statusEl) return;
 
-  const cfg = state.settings || { autoRun: false, iaAuto: false, instanceUrl: "", lastRunAt: null, loopStatus: "idle" };
+  const cfg = state.settings || {
+    autoRun: false, iaAuto: false, instanceUrl: "",
+    instanceToken: "", instanceAuthHeader: "token", instanceAuthScheme: "",
+    lastRunAt: null, loopStatus: "idle"
+  };
 
   autoEl.checked = !!cfg.autoRun;
   iaEl.checked = !!cfg.iaAuto;
   if (instanceEl) instanceEl.value = cfg.instanceUrl || "";
+  if (tokenEl) tokenEl.value = cfg.instanceToken || "";
+  if (headerEl) headerEl.value = (cfg.instanceAuthHeader || "token");
+  if (schemeEl) schemeEl.value = (cfg.instanceAuthScheme || "");
+
   const last = cfg.lastRunAt ? formatDate(cfg.lastRunAt) : "-";
   const st = cfg.loopStatus || "idle";
-  // Exibe o status atual do loop e a data da última execução
   statusEl.textContent = `Status: ${st} | Última execução: ${last}`;
 }
 // ==========================================
 
-// Inicia o loop de processamento para um cliente (já existia; mantido)
+// Inicia o loop de processamento para um cliente
 async function runLoop(clientSlug) {
   try {
     const slug = clientSlug || state.selected;
@@ -325,13 +363,10 @@ async function runLoop(clientSlug) {
       method: "POST",
       body: JSON.stringify({ client: slug, iaAuto }),
     });
-    // Registra última execução local
     const iso = new Date().toISOString();
     state.settings = saveLocalSettings(slug, { lastRunAt: iso });
-    // Após iniciar o loop, pedimos ao servidor o status atualizado
     try {
       const serv = await loadServerSettings(slug);
-      // Atualiza estado local com status retornado (mas não persistimos loopStatus no localStorage)
       state.settings = { ...state.settings, loopStatus: serv.loopStatus || state.settings.loopStatus || "idle" };
     } catch {}
     renderSettings();
@@ -364,7 +399,6 @@ async function loadClients() {
     state.clients = clients.sort((a, b) => a.slug.localeCompare(b.slug));
     renderClientList();
 
-    // Auto-select first client if none selected
     if (!state.selected && state.clients.length > 0) {
       selectClient(state.clients[0].slug);
     } else if (state.selected) {
@@ -392,7 +426,6 @@ function renderClientList() {
       const active = state.selected === client.slug ? "active" : "";
       const badge = client.queueCount !== undefined ? `<span class="client-badge">${client.queueCount}</span>` : "";
       const loopButton = `<button class="btn-icon run-loop-btn" data-slug="${client.slug}" title="Executar loop" aria-label="Executar loop"><i data-lucide="play-circle"></i></button>`;
-      // Indicador de status: usa a propriedade loopStatus retornada do backend (default: idle)
       const status = client.loopStatus || "idle";
       const statusDot = `<span class="status-dot status-${status}"></span>`;
       return `
@@ -407,13 +440,11 @@ function renderClientList() {
     })
     .join("");
 
-  // Click para selecionar cliente
   container.querySelectorAll(".client-item").forEach((item) => {
     item.addEventListener("click", () => {
       selectClient(item.dataset.slug);
     });
   });
-  // Botão ▶ executar loop
   container.querySelectorAll(".run-loop-btn").forEach((btn) => {
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -421,7 +452,6 @@ function renderClientList() {
       runLoop(slug);
     });
   });
-  // Ícones
   if (window.lucide && typeof window.lucide.createIcons === "function") {
     window.lucide.createIcons();
   }
@@ -431,28 +461,23 @@ function renderClientList() {
 async function selectClient(slug) {
   state.selected = slug;
 
-  // Reset pagination
   state.queue.page = 1;
   state.queue.search = "";
   state.totals.page = 1;
   state.totals.search = "";
   state.totals.sent = "all";
 
-  // Update UI
   renderClientList();
   document.getElementById("empty-state").style.display = "none";
   document.getElementById("client-view").style.display = "block";
   document.getElementById("client-title").textContent = slug;
 
-  // Clear search inputs
   document.getElementById("queue-search").value = "";
   document.getElementById("totals-search").value = "";
   document.getElementById("totals-filter").value = "all";
 
-  // Garante que a aba Config exista
   injectConfigTabOnce();
 
-  // Carrega dados e configurações do cliente
   await loadClientData(slug);
   await syncSettingsFromServer(slug);
 }
@@ -460,15 +485,11 @@ async function selectClient(slug) {
 // Load Client Data
 async function loadClientData(slug) {
   try {
-    // KPIs
     const stats = await api(`/api/stats?client=${slug}`);
     state.kpis = stats;
     renderKPIs();
 
-    // Fila
     await loadQueue();
-
-    // Totais
     await loadTotals();
   } catch (error) {
     console.error("[v0] Failed to load client data:", error);
@@ -483,7 +504,6 @@ function renderKPIs() {
   const filaEl     = document.getElementById("kpi-fila");
   if (totalsEl) totalsEl.textContent = state.kpis.totais || 0;
   if (enviadosEl) enviadosEl.textContent = state.kpis.enviados || 0;
-  // A região "Pendentes" pode não existir no HTML; checa antes de escrever
   if (pendEl) pendEl.textContent = state.kpis.pendentes || 0;
   if (filaEl) filaEl.textContent = state.kpis.fila || 0;
 }
@@ -732,14 +752,11 @@ function downloadCSVTemplate() {
 
 // Event Listeners
 document.addEventListener("DOMContentLoaded", () => {
-  // Inject da aba Config logo no início
   injectConfigTabOnce();
 
-  // Initialize Lucide icons
   const lucide = window.lucide;
   lucide && lucide.createIcons && lucide.createIcons();
 
-  // Refresh button
   document.getElementById("refresh-btn").addEventListener("click", async () => {
     await loadClients();
     if (state.selected) {
@@ -748,10 +765,8 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Client search
   document.getElementById("client-search").addEventListener("input", renderClientList);
 
-  // New client form
   document.getElementById("new-client-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const slug = document.getElementById("new-client-slug").value;
@@ -759,26 +774,23 @@ document.addEventListener("DOMContentLoaded", () => {
     e.target.reset();
   });
 
-  // Tabs (existentes)
   document.querySelectorAll(".tab").forEach((tab) => {
     tab.addEventListener("click", () => {
       const tabName = tab.dataset.tab;
       document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
-      tab.addEventListener("click", () => {}); // noop (mantém assinatura)
+      tab.addEventListener("click", () => {});
       tab.classList.add("active");
       document.querySelectorAll(".tab-content").forEach((content) => content.classList.remove("active"));
       document.getElementById(`tab-${tabName}`).classList.add("active");
     });
   });
 
-  // Queue search
   document.getElementById("queue-search").addEventListener("input", (e) => {
     state.queue.search = e.target.value;
     state.queue.page = 1;
     loadQueue();
   });
 
-  // Queue pagination
   document.getElementById("queue-prev").addEventListener("click", () => {
     if (state.queue.page > 1) {
       state.queue.page--;
@@ -793,21 +805,18 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Totals search
   document.getElementById("totals-search").addEventListener("input", (e) => {
     state.totals.search = e.target.value;
     state.totals.page = 1;
     loadTotals();
   });
 
-  // Totals filter
   document.getElementById("totals-filter").addEventListener("change", (e) => {
     state.totals.sent = e.target.value;
     state.totals.page = 1;
     loadTotals();
   });
 
-  // Totals pagination
   document.getElementById("totals-prev").addEventListener("click", () => {
     if (state.totals.page > 1) {
       state.totals.page--;
@@ -822,7 +831,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // Add contact form
   document.getElementById("add-contact-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const name = document.getElementById("contact-name").value;
@@ -832,23 +840,19 @@ document.addEventListener("DOMContentLoaded", () => {
     e.target.reset();
   });
 
-  // CSV file input
   document.getElementById("csv-file").addEventListener("change", (e) => {
     const fileName = e.target.files[0]?.name || "Selecione um arquivo CSV";
     document.getElementById("file-name").textContent = fileName;
   });
 
-  // Import CSV form
   document.getElementById("import-csv-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const file = document.getElementById("csv-file").files[0];
     if (file) importCSV(file);
   });
 
-  // Download template
   document.getElementById("download-template").addEventListener("click", downloadCSVTemplate);
 
-  // Modal controls
   document.getElementById("modal-close").addEventListener("click", () => {
     document.getElementById("queue-action-modal").classList.remove("active");
   });
@@ -859,11 +863,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (e.target.id === "queue-action-modal") e.target.classList.remove("active");
   });
 
-  // Initial load + auto refresh
   loadClients();
   setInterval(loadClients, 10000);
 
-  // Limpa timers ao sair
   window.addEventListener("beforeunload", () => {
     Object.keys(autoTimers).forEach((slug) => stopAutoFor(slug));
   });
