@@ -82,7 +82,7 @@ body {
 
 .sidebar-header {
   padding: 1.5rem;
-  border-bottom: 1px solid var (--card-border);
+  border-bottom: 1px solid var(--card-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -191,7 +191,7 @@ body {
 
 .client-badge {
   background: var(--accent);
-  color: var (--bg-start);
+  color: var(--bg-start);
   padding: 0.125rem 0.5rem;
   border-radius: 12px;
   font-size: 0.75rem;
@@ -199,7 +199,12 @@ body {
 }
 
 /* =====================================
-   Indicadores de status do loop por cliente */
+   Indicadores de status do loop por cliente
+   - status-dot: bolinha colorida
+   - status-idle: o loop está ocioso
+   - status-running: loop em execução
+   - status-error: houve algum erro na última execução
+*/
 .status-dot {
   display: inline-block;
   width: 0.6rem;
@@ -218,13 +223,13 @@ body {
 }
 
 .client-item.active .client-badge {
-  background: var (--bg-start);
+  background: var(--bg-start);
   color: var(--accent);
 }
 
 .new-client-form {
   padding: 1.5rem;
-  border-top: 1px solid var (--card-border);
+  border-top: 1px solid var(--card-border);
   background: var(--bg-end);
 }
 
@@ -238,7 +243,7 @@ body {
   width: 100%;
   padding: 0.625rem;
   background: var(--card);
-  border: 1px solid var (--card-border);
+  border: 1px solid var(--card-border);
   border-radius: var(--radius);
   color: var(--text);
   margin-bottom: 0.75rem;
@@ -279,6 +284,10 @@ body {
 
 .client-view {
   max-width: 1200px;
+  /* Define a positioning context for the loop HUD wrapper. Without a positioning context,
+     absolutely positioned elements appended inside .client-view would anchor relative
+     to the document body. By setting position: relative we allow the HUD wrapper to
+     align itself to the top-right of the client-view container. */
   position: relative;
 }
 
@@ -346,40 +355,6 @@ body {
   color: var(--text);
 }
 
-/* Progress bar integrated into KPI */
-.kpi-progress {
-  margin-top: 0.75rem;
-}
-
-.kpi-progress .progress-bar {
-  height: 8px;
-  background: #101826;
-  border: 1px solid var (--card-border);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.kpi-progress .progress-bar .progress-fill {
-  height: 100%;
-  width: 0%;
-  background: linear-gradient(90deg, var(--accent), #22a7c5);
-  background-size: 200% 100%;
-  transition: width 0.35s ease;
-}
-
-.kpi-progress .progress-info {
-  margin-top: 0.3rem;
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.78rem;
-  color: var(--muted);
-}
-
-.kpi-progress .progress-info span {
-  color: var(--text);
-  font-weight: 600;
-}
-
 /* Tabs */
 .tabs {
   display: flex;
@@ -417,7 +392,7 @@ body {
 
 .tab.active {
   color: var(--accent);
-  border-bottom-color: var (--accent);
+  border-bottom-color: var(--accent);
 }
 
 .tab-content {
@@ -454,14 +429,14 @@ body {
 
 .filter-select:focus {
   outline: none;
-  border-color: var (--accent);
+  border-color: var(--accent);
 }
 
-/* Table container */
+/* Tables */
 .table-container {
-  background: var (--card);
-  border: 1px solid var (--card-border);
-  border-radius: var (--radius);
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
   overflow: hidden;
   margin-bottom: 1rem;
 }
@@ -472,7 +447,7 @@ body {
 }
 
 .data-table thead {
-  background: var (--bg-end);
+  background: var(--bg-end);
 }
 
 .data-table th {
@@ -480,14 +455,14 @@ body {
   text-align: left;
   font-weight: 600;
   font-size: 0.875rem;
-  color: var (--muted);
+  color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
 .data-table td {
   padding: 1rem;
-  border-top: 1px solid var (--card-border);
+  border-top: 1px solid var(--card-border);
   font-size: 0.9rem;
 }
 
@@ -517,12 +492,12 @@ body {
 }
 
 .badge.success {
-  background: var (--accent);
+  background: var(--accent);
   color: var(--bg-start);
 }
 
 .badge.pending {
-  background: var (--secondary);
+  background: var(--secondary);
   color: var(--text);
 }
 
@@ -537,18 +512,18 @@ body {
 
 #queue-page-info,
 #totals-page-info {
-  color: var (--muted);
+  color: var(--muted);
   font-size: 0.875rem;
 }
 
 /* Forms */
 .form-card {
-  background: var (--card);
-  border: 1px solid var (--card-border);
-  border-radius: var (--radius);
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
   padding: 2rem;
   max-width: 600px;
-  box-shadow: var (--shadow);
+  box-shadow: var(--shadow);
 }
 
 .form-card h3 {
@@ -573,17 +548,17 @@ body {
 .form-group select {
   width: 100%;
   padding: 0.75rem;
-  background: var (--bg-end);
-  border: 1px solid var (--card-border);
-  border-radius: var (--radius);
-  color: var (--text);
+  background: var(--bg-end);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  color: var(--text);
   font-size: 0.9rem;
 }
 
 .form-group input:focus,
 .form-group select:focus {
   outline: none;
-  border-color: var (--accent);
+  border-color: var(--accent);
 }
 
 .file-input-wrapper {
@@ -600,9 +575,9 @@ body {
 
 .file-input-display {
   padding: 1.5rem;
-  background: var (--bg-end);
-  border: 2px dashed var (--card-border);
-  border-radius: var (--radius);
+  background: var(--bg-end);
+  border: 2px dashed var(--card-border);
+  border-radius: var(--radius);
   text-align: center;
   cursor: pointer;
   transition: all 0.2s;
@@ -613,14 +588,14 @@ body {
 }
 
 .file-input-display:hover {
-  border-color: var (--accent);
-  background: var (--card);
+  border-color: var(--accent);
+  background: var(--card);
 }
 
 .file-input-display i {
   width: 32px;
   height: 32px;
-  color: var (--muted);
+  color: var(--muted);
 }
 
 .import-actions {
@@ -630,8 +605,8 @@ body {
 .import-result {
   margin-top: 1.5rem;
   padding: 1.5rem;
-  background: var (--bg-end);
-  border-radius: var (--radius);
+  background: var(--bg-end);
+  border-radius: var(--radius);
 }
 
 .import-result h4 {
@@ -658,15 +633,15 @@ body {
 }
 
 .result-stat.success {
-  color: var (--accent);
+  color: var(--accent);
 }
 
 .result-stat.warning {
-  color: var (--warning);
+  color: var(--warning);
 }
 
 .result-stat.error {
-  color: var (--danger);
+  color: var(--danger);
 }
 
 .checkbox-group {
@@ -690,7 +665,7 @@ body {
 .btn {
   padding: 0.75rem 1.5rem;
   border: none;
-  border-radius: var (--radius);
+  border-radius: var(--radius);
   font-size: 0.9rem;
   font-weight: 500;
   cursor: pointer;
@@ -707,48 +682,48 @@ body {
 }
 
 .btn-primary {
-  background: var (--accent);
-  color: var (--bg-start);
+  background: var(--accent);
+  color: var(--bg-start);
 }
 
 .btn-primary:hover {
-  background: var (--accent-hover);
+  background: var(--accent-hover);
 }
 
 .btn-secondary {
-  background: var (--secondary);
-  color: var (--text);
+  background: var(--secondary);
+  color: var(--text);
 }
 
 .btn-secondary:hover {
-  background: var (--secondary-hover);
+  background: var(--secondary-hover);
 }
 
 .btn-danger {
-  background: var (--danger);
+  background: var(--danger);
   color: white;
 }
 
 .btn-danger:hover {
-  background: var (--danger-hover);
+  background: var(--danger-hover);
 }
 
 .btn-icon {
   padding: 0.5rem;
   background: transparent;
-  border: 1px solid var (--card-border);
-  border-radius: var (--radius);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s;
-  color: var (--text);
+  color: var(--text);
 }
 
 .btn-icon:hover {
-  background: var (--card-border);
-  border-color: var (--accent);
+  background: var(--card-border);
+  border-color: var(--accent);
 }
 
 .btn-icon i {
@@ -785,17 +760,17 @@ body {
 }
 
 .modal-content {
-  background: var (--card);
-  border: 1px solid var (--card-border);
-  border-radius: var (--radius);
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
   width: 90%;
   max-width: 500px;
-  box-shadow: var (--shadow-lg);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-header {
   padding: 1.5rem;
-  border-bottom: 1px solid var (--card-border);
+  border-bottom: 1px solid var(--card-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -812,7 +787,7 @@ body {
 
 .modal-footer {
   padding: 1.5rem;
-  border-top: 1px solid var (--card-border);
+  border-top: 1px solid var(--card-border);
   display: flex;
   justify-content: flex-end;
   gap: 0.75rem;
@@ -830,11 +805,11 @@ body {
 }
 
 .toast {
-  background: var (--card);
-  border: 1px solid var (--card-border);
-  border-radius: var (--radius);
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
   padding: 1rem 1.25rem;
-  box-shadow: var (--shadow-lg);
+  box-shadow: var(--shadow-lg);
   display: flex;
   align-items: center;
   gap: 0.75rem;
@@ -860,15 +835,15 @@ body {
 }
 
 .toast.success {
-  border-left: 4px solid var (--accent);
+  border-left: 4px solid var(--accent);
 }
 
 .toast.success i {
-  color: var (--accent);
+  color: var(--accent);
 }
 
 .toast.error {
-  border-left: 4px solid var (--danger);
+  border-left: 4px solid var(--danger);
 }
 
 .toast.error i {
@@ -876,19 +851,19 @@ body {
 }
 
 .toast.warning {
-  border-left: 4px solid var (--warning);
+  border-left: 4px solid var(--warning);
 }
 
 .toast.warning i {
-  color: var (--warning);
+  color: var(--warning);
 }
 
 .toast.info {
-  border-left: 4px solid var (--accent);
+  border-left: 4px solid var(--accent);
 }
 
 .toast.info i {
-  color: var (--accent);
+  color: var(--accent);
 }
 
 /* Loading */
@@ -908,8 +883,8 @@ body {
 .spinner {
   width: 48px;
   height: 48px;
-  border: 4px solid var (--card-border);
-  border-top-color: var (--accent);
+  border: 4px solid var(--card-border);
+  border-top-color: var(--accent);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -927,16 +902,16 @@ body {
 }
 
 ::-webkit-scrollbar-track {
-  background: var (--bg-end);
+  background: var(--bg-end);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var (--card-border);
+  background: var(--card-border);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var (--secondary);
+  background: var(--secondary);
 }
 
 /* Responsive */
@@ -950,7 +925,7 @@ body {
     height: auto;
     max-height: 50vh;
     border-right: none;
-    border-bottom: 1px solid var (--card-border);
+    border-bottom: 1px solid var(--card-border);
   }
 
   .sidebar-header {
@@ -995,18 +970,140 @@ body {
 /*
  * ================= Loop HUD Styles =================
  *
- * A HUD flutuante não é mais usado — a barra de progresso está integrada ao cartão "Enviados".
- * O wrapper permanece no CSS apenas como referência e encontra-se escondido.
+ * The loop HUD displays the progress of message sending, the last sent contact and a status
+ * indicator. It is positioned fixed in the top-right corner of the client view on
+ * larger screens. A wrapper element (#loop-hud-wrapper) ensures correct positioning within
+ * the .client-view container. On smaller screens the HUD becomes a full-width block that
+ * sits below the KPI cards.
+ */
+
+/*
+ * Positioning wrapper for the HUD inside the client view.
+ *
+ * By default the HUD floats on the top-right of the page so it doesn’t
+ * overlap the KPI cards.  The fixed positioning ensures that the HUD
+ * remains visible when the page scrolls.  A small offset from the
+ * header (80px) and from the right (25px) gives breathing room.
+ *
+ * On small screens the wrapper becomes part of the normal flow and
+ * stretches to the full width of the container.
  */
 #loop-hud-wrapper {
-  /* Hidden by default. The progress HUD is now embedded within the "Enviados" KPI card. */
-  display: none;
+  position: fixed;
+  top: 80px;
+  right: 25px;
+  width: 280px;
+  z-index: 1000;
 }
 
-/* Mantém as classes da HUD anterior como legado, mas não são usadas. */
-.loop-hud {}
+/* Base HUD container styling */
+.loop-hud {
+  background: var(--card);
+  border: 1px solid var (--card-border);
+  border-radius: var(--radius);
+  padding: 0.75rem 0.9rem 0.85rem;
+  box-shadow: var(--shadow);
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 0.6rem 0.8rem;
+}
 
-/* Responsivo para o antigo HUD (não usado atualmente). */
+/* Status indicator (small circle) */
+.loop-hud .hud-indicator {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  align-self: center;
+  background: #475569;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45);
+  transition: all 0.4s ease;
+}
+
+/* Active indicator uses the accent color and a pulsing glow */
+.loop-hud .hud-indicator.active {
+  background: var(--accent);
+  animation: pulse-glow 1.6s infinite;
+}
+
+/* Pulse animation used by the active indicator */
+@keyframes pulse-glow {
+  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
+  70% { box-shadow: 0 0 0 11px rgba(34, 197, 94, 0.0); }
+  100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.0); }
+}
+
+/* Header containing the “Progresso” label and percentage */
+.loop-hud .hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Title and percentage styling */
+.loop-hud .hud-title {
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.loop-hud .hud-percent {
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Progress bar container */
+.loop-hud .hud-bar {
+  grid-column: 1 / span 2;
+  height: 10px;
+  background: #101826;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+/* Animated progress fill */
+.loop-hud .hud-bar-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #22a7c5);
+  background-size: 200% 100%;
+  transition: width 0.35s ease;
+}
+
+/* When the loop is running, stripes move across the bar */
+.loop-hud .hud-bar-fill.active {
+  animation: stripe-move 2.2s linear infinite;
+}
+
+@keyframes stripe-move {
+  0% { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* Meta sections for shipped count and last send */
+.loop-hud .hud-info,
+.loop-hud .hud-meta {
+  grid-column: 1 / span 2;
+  margin-top: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.loop-hud .hud-info span {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.loop-hud .hud-meta span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Responsive: reposition HUD below KPI cards on narrower screens */
 @media (max-width: 900px) {
   #loop-hud-wrapper {
     position: static;
