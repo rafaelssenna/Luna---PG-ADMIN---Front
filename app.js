@@ -127,7 +127,7 @@ const state = {
 // variáveis globais são usados para controlar a conexão aberta
 // com o backend e para armazenar os eventos recebidos, de modo a
 // atualizar a UI (barra de progresso e tabela) conforme os envios
-// são processados.
+// são processados
 let progressSource = null;
 const progressData = {
   total: 0,
