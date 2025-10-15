@@ -355,6 +355,170 @@ body {
   color: var(--text);
 }
 
+/* Estilos melhorados para o HUD de Progresso */
+/*
+ * ================= Loop HUD Styles =================
+ *
+ * O HUD de loop exibe o progresso do envio de mensagens, informações sobre
+ * o último contato enviado e um indicador de status. Ele é posicionado fixo
+ * no canto superior direito da visualização do cliente em telas maiores.
+ * Em telas menores, o HUD se torna um bloco de largura total que fica
+ * abaixo dos cartões KPI.
+ */
+
+/*
+ * Wrapper de posicionamento para o HUD dentro da visualização do cliente.
+ *
+ * Por padrão, o HUD flutua no canto superior direito da página para não
+ * sobrepor os cartões KPI. O posicionamento fixo garante que o HUD
+ * permaneça visível quando a página rola. Um pequeno deslocamento do
+ * cabeçalho (80px) e da direita (25px) dá espaço para respirar.
+ *
+ * Em telas pequenas, o wrapper se torna parte do fluxo normal e
+ * se estende até a largura total do contêiner.
+ */
+#loop-hud-wrapper {
+  position: fixed;
+  top: 80px;
+  right: 25px;
+  width: 300px;
+  z-index: 1000;
+}
+
+/* Estilo base do contêiner HUD */
+.loop-hud {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  box-shadow: var(--shadow-lg);
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 0.7rem 0.9rem;
+  align-items: center;
+}
+
+/* Indicador de status (círculo pequeno) */
+.loop-hud .hud-indicator {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  align-self: center;
+  background: #475569;
+  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45);
+  transition: all 0.4s ease;
+}
+
+/* Indicador ativo usa a cor de destaque e um brilho pulsante */
+.loop-hud .hud-indicator.active {
+  background: var(--accent);
+  animation: pulse-glow 1.6s infinite;
+}
+
+/* Animação de pulso usada pelo indicador ativo */
+@keyframes pulse-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 11px rgba(34, 197, 94, 0.0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.0);
+  }
+}
+
+/* Cabeçalho contendo o rótulo "Progresso" e a porcentagem */
+.loop-hud .hud-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* Estilo do título e porcentagem */
+.loop-hud .hud-title {
+  font-size: 0.875rem;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.loop-hud .hud-percent {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* Contêiner da barra de progresso */
+.loop-hud .hud-bar {
+  grid-column: 1 / span 2;
+  height: 12px;
+  background: #101826;
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+/* Preenchimento animado da barra de progresso */
+.loop-hud .hud-bar-fill {
+  width: 0%;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #16a34a);
+  background-size: 200% 100%;
+  transition: width 0.35s ease;
+  border-radius: 999px;
+}
+
+/* Quando o loop está em execução, listras se movem pela barra */
+.loop-hud .hud-bar-fill.active {
+  animation: stripe-move 2.2s linear infinite;
+}
+
+@keyframes stripe-move {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+/* Seções de informação (Envios, Último envio, Horário) */
+.loop-hud .hud-section {
+  grid-column: 1 / span 2;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.85rem;
+  padding: 0.25rem 0;
+  border-top: 1px solid rgba(31, 43, 59, 0.5);
+}
+
+.loop-hud .hud-section:first-of-type {
+  border-top: none;
+  margin-top: 0.3rem;
+}
+
+.loop-hud .hud-label {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.loop-hud .hud-value {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Responsivo: reposicionar HUD abaixo dos cartões KPI em telas mais estreitas */
+@media (max-width: 1100px) {
+  #loop-hud-wrapper {
+    position: static;
+    width: 100%;
+    margin-bottom: 2rem;
+    right: auto;
+    top: auto;
+  }
+}
+
 /* Tabs */
 .tabs {
   display: flex;
@@ -847,7 +1011,7 @@ body {
 }
 
 .toast.error i {
-  color: var (--danger);
+  color: var(--danger);
 }
 
 .toast.warning {
@@ -964,152 +1128,5 @@ body {
 
   .toast {
     min-width: auto;
-  }
-}
-
-/*
- * ================= Loop HUD Styles =================
- *
- * The loop HUD displays the progress of message sending, the last sent contact and a status
- * indicator. It is positioned fixed in the top-right corner of the client view on
- * larger screens. A wrapper element (#loop-hud-wrapper) ensures correct positioning within
- * the .client-view container. On smaller screens the HUD becomes a full-width block that
- * sits below the KPI cards.
- */
-
-/*
- * Positioning wrapper for the HUD inside the client view.
- *
- * By default the HUD floats on the top-right of the page so it doesn’t
- * overlap the KPI cards.  The fixed positioning ensures that the HUD
- * remains visible when the page scrolls.  A small offset from the
- * header (80px) and from the right (25px) gives breathing room.
- *
- * On small screens the wrapper becomes part of the normal flow and
- * stretches to the full width of the container.
- */
-#loop-hud-wrapper {
-  position: fixed;
-  top: 80px;
-  right: 25px;
-  width: 280px;
-  z-index: 1000;
-}
-
-/* Base HUD container styling */
-.loop-hud {
-  background: var(--card);
-  border: 1px solid var (--card-border);
-  border-radius: var(--radius);
-  padding: 0.75rem 0.9rem 0.85rem;
-  box-shadow: var(--shadow);
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  gap: 0.6rem 0.8rem;
-}
-
-/* Status indicator (small circle) */
-.loop-hud .hud-indicator {
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  align-self: center;
-  background: #475569;
-  box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.45);
-  transition: all 0.4s ease;
-}
-
-/* Active indicator uses the accent color and a pulsing glow */
-.loop-hud .hud-indicator.active {
-  background: var(--accent);
-  animation: pulse-glow 1.6s infinite;
-}
-
-/* Pulse animation used by the active indicator */
-@keyframes pulse-glow {
-  0% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.5); }
-  70% { box-shadow: 0 0 0 11px rgba(34, 197, 94, 0.0); }
-  100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.0); }
-}
-
-/* Header containing the “Progresso” label and percentage */
-.loop-hud .hud-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-/* Title and percentage styling */
-.loop-hud .hud-title {
-  font-size: 0.875rem;
-  color: var(--muted);
-}
-
-.loop-hud .hud-percent {
-  font-size: 0.875rem;
-  font-weight: 600;
-  color: var(--text);
-}
-
-/* Progress bar container */
-.loop-hud .hud-bar {
-  grid-column: 1 / span 2;
-  height: 10px;
-  background: #101826;
-  border: 1px solid var(--card-border);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-/* Animated progress fill */
-.loop-hud .hud-bar-fill {
-  width: 0%;
-  height: 100%;
-  background: linear-gradient(90deg, var(--accent), #22a7c5);
-  background-size: 200% 100%;
-  transition: width 0.35s ease;
-}
-
-/* When the loop is running, stripes move across the bar */
-.loop-hud .hud-bar-fill.active {
-  animation: stripe-move 2.2s linear infinite;
-}
-
-@keyframes stripe-move {
-  0% { background-position: 0% 50%; }
-  100% { background-position: 200% 50%; }
-}
-
-/* Meta sections for shipped count and last send */
-.loop-hud .hud-info,
-.loop-hud .hud-meta {
-  grid-column: 1 / span 2;
-  margin-top: 0.4rem;
-  font-size: 0.82rem;
-  color: var(--muted);
-  display: flex;
-  justify-content: space-between;
-  gap: 0.75rem;
-}
-
-.loop-hud .hud-info span {
-  color: var(--text);
-  font-weight: 600;
-}
-
-.loop-hud .hud-meta span {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Responsive: reposition HUD below KPI cards on narrower screens */
-@media (max-width: 900px) {
-  #loop-hud-wrapper {
-    position: static;
-    width: 100%;
-    margin-top: 20px;
-    right: auto;
-    top: auto;
   }
 }
