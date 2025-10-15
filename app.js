@@ -56,11 +56,6 @@ function startAutoFor(slug) {
   autoTimers[slug] = setInterval(async () => {
     try {
       const { iaAuto } = loadLocalSettings(slug);
-      // Se o cliente em execução estiver selecionado, inicializa a UI de progresso
-      if (state.selected === slug) {
-        initProgress(slug);
-        connectProgressStream(slug);
-      }
       await api("/api/loop", {
         method: "POST",
         body: JSON.stringify({ client: slug, iaAuto }),
@@ -121,136 +116,6 @@ const state = {
   hudTimer: null, // polling do HUD
   pendingQueueAction: null, // usado no modal de remover
 };
-
-// ====== Progresso em Tempo Real ======
-// Fonte SSE de progresso corrente e dados acumulados. Estas
-// variáveis globais são usadas para controlar a conexão aberta
-// com o backend e para armazenar os eventos recebidos, de modo a
-// atualizar a UI (barra de progresso e tabela) conforme os envios
-// são processados.
-let progressSource = null;
-const progressData = {
-  total: 0,
-  processed: 0,
-  events: [],
-};
-
-/**
- * Inicializa o painel de progresso para o cliente selecionado.
- * Calcula o total a partir do número de itens atualmente na fila
- * (state.kpis.fila) e limpa qualquer progresso anterior. Oculta
- * ou revela o painel dependendo se há itens a processar.
- */
-function initProgress(slug) {
-  // calcula quantidade de itens a processar; usa fila atual
-  const total = Number(state.kpis?.fila || 0);
-  progressData.total = total;
-  progressData.processed = 0;
-  progressData.events = [];
-  // limpa tabela e barra
-  const tbody = document.getElementById('progress-table-body');
-  if (tbody) tbody.innerHTML = '';
-  const bar = document.getElementById('progress-bar-fill');
-  if (bar) bar.style.width = '0%';
-  // mostra ou esconde o painel
-  const panel = document.getElementById('progress-panel');
-  if (panel) {
-    if (total > 0) panel.style.display = 'block';
-    else panel.style.display = 'none';
-  }
-}
-
-/**
- * Atualiza a UI de progresso com um novo evento de envio. Incrementa
- * o contador de processados e ajusta a largura da barra com base no
- * total previamente calculado. Também adiciona uma nova linha na
- * tabela de progresso contendo o nome, telefone e status.
- */
-function updateProgressUI(evt) {
-  progressData.events.push(evt);
-  progressData.processed += 1;
-  // Atualiza barra de progresso
-  const fill = document.getElementById('progress-bar-fill');
-  if (fill && progressData.total > 0) {
-    const pct = Math.min(100, Math.round((progressData.processed / progressData.total) * 100));
-    fill.style.width = `${pct}%`;
-  }
-  // Adiciona linha na tabela
-  const tbody = document.getElementById('progress-table-body');
-  if (tbody) {
-    const tr = document.createElement('tr');
-    const tdName = document.createElement('td');
-    tdName.textContent = evt.name || '-';
-    const tdPhone = document.createElement('td');
-    tdPhone.textContent = evt.phone || '-';
-    const tdStatus = document.createElement('td');
-    const span = document.createElement('span');
-    let cls = 'status-success';
-    if (evt.status === 'error') cls = 'status-error';
-    if (evt.status === 'skipped') cls = 'status-skipped';
-    span.className = cls;
-    span.textContent = evt.status === 'success' ? 'Sucesso' : (evt.status === 'error' ? 'Erro' : 'Ignorado');
-    tdStatus.appendChild(span);
-    tr.appendChild(tdName);
-    tr.appendChild(tdPhone);
-    tr.appendChild(tdStatus);
-    tbody.appendChild(tr);
-    // Desloca scroll para o final para exibir o evento mais recente
-    const panel = document.getElementById('progress-panel');
-    if (panel) panel.scrollTop = panel.scrollHeight;
-  }
-  // Se todos os itens foram processados, oculta o painel após breve pausa
-  if (progressData.total > 0 && progressData.processed >= progressData.total) {
-    setTimeout(() => {
-      const p = document.getElementById('progress-panel');
-      if (p) p.style.display = 'none';
-      // encerra o stream SSE uma vez concluído
-      disconnectProgressStream();
-    }, 4000);
-  }
-}
-
-/**
- * Abre uma conexão SSE com o backend para receber eventos de
- * progresso. Se já houver uma conexão aberta, ela será fechada
- * antes de abrir uma nova. A URL inclui o slug do cliente em
- * questão. Cada mensagem recebida é tratada em updateProgressUI.
- */
-function connectProgressStream(slug) {
-  disconnectProgressStream();
-  try {
-    const url = `${API_BASE_URL}/api/progress?client=${encodeURIComponent(slug)}`;
-    progressSource = new EventSource(url);
-    progressSource.onmessage = (ev) => {
-      try {
-        const data = JSON.parse(ev.data || '{}');
-        if (data) updateProgressUI(data);
-      } catch (err) {
-        console.warn('Falha ao processar evento de progresso:', err);
-      }
-    };
-    progressSource.onerror = () => {
-      // Em caso de erro, encerramos a conexão para evitar loops
-      disconnectProgressStream();
-    };
-  } catch (err) {
-    console.warn('SSE não suportado ou erro ao conectar', err);
-  }
-}
-
-/**
- * Fecha a conexão SSE existente (caso exista) e oculta o painel
- * de progresso. Deve ser chamado quando o loop termina ou
- * quando o usuário troca de cliente.
- */
-function disconnectProgressStream() {
-  if (progressSource) {
-    try { progressSource.close(); } catch {}
-    progressSource = null;
-  }
-  const panel = document.getElementById('progress-panel');
-  if (panel) panel.style.display = 'none';
-}
 
 // ====== API Helpers ======
 async function api(path, options = {}) {
@@ -332,7 +197,7 @@ async function syncSettingsFromServer(slug) {
     state.settings = { ...next, loopStatus: s.loopStatus || "idle" };
     renderSettings();
     applyAutoState(slug);
-    applyHudPolling();
+    applyHudPolling(); // iniciar/parar polling do HUD conforme status
   } catch (e) {
     state.settings = loadLocalSettings(slug);
     renderSettings();
@@ -395,6 +260,11 @@ function formatDate(dateString) {
     minute: "2-digit",
   });
 }
+function formatShortTime(dateString) {
+  if (!dateString) return "-";
+  const date = new Date(dateString);
+  return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+}
 function escapeAttr(s) {
   return String(s ?? "").replace(/"/g, "&quot;");
 }
@@ -453,6 +323,7 @@ function startHudPolling() {
       }
       renderLoopHud();
     } catch (e) {
+      console.debug("HUD polling erro:", e?.message || e);
     }
   }, HUD_POLL_MS);
 }
@@ -507,7 +378,7 @@ function injectConfigTabOnce() {
 
       <div class="form-group" style="margin-top:1rem;">
         <label for="instance-url">Instância (URL de envio da IA)</label>
-        <input type="url" id="instance-url" placeholder="https://minha-instância.exemplo/send/text">
+        <input type="url" id="instance-url" placeholder="https://minha-instancia.exemplo/send/text">
       </div>
 
       <div class="form-group" style="margin-top:.5rem;">
@@ -588,7 +459,7 @@ function injectConfigTabOnce() {
 
       const typed = window.prompt(`Para confirmar, digite o slug do cliente exatamente como abaixo:\n\n${slug}`);
       if (typed !== slug) {
-      showToast("Confirmação cancelada.", "warning");
+        showToast("Confirmação cancelada.", "warning");
         return;
       }
 
@@ -620,6 +491,7 @@ function injectConfigTabOnce() {
       } else {
         showToast("Falha ao apagar as tabelas do cliente", "error");
       }
+      console.error("delete-client error:", e);
     }
   });
 
@@ -656,6 +528,202 @@ function renderSettings() {
   statusEl.textContent = `Status: ${st} | Última execução: ${last}`;
 }
 
+// ====== NOVA ABA: Progresso (SSE) ======
+let progressEvtSource = null;
+let progressBuffer = []; // itens recentes para a tabela
+let progressTotals = { total: 0, processed: 0, success: 0, error: 0, skipped: 0 };
+
+function injectProgressTabOnce() {
+  if (document.querySelector('.tab[data-tab="progress"]') && document.getElementById("tab-progress")) {
+    return;
+  }
+
+  const tabs = document.querySelector(".tabs");
+  const clientView = document.getElementById("client-view");
+  if (!tabs || !clientView) return;
+
+  const btn = document.createElement("button");
+  btn.className = "tab";
+  btn.dataset.tab = "progress";
+  btn.innerHTML = `<i data-lucide="activity"></i>Progresso`;
+  tabs.appendChild(btn);
+
+  const content = document.createElement("div");
+  content.id = "tab-progress";
+  content.className = "tab-content";
+  content.innerHTML = `
+    <div class="form-card">
+      <h3 style="display:flex;align-items:center;gap:.5rem;">
+        <i data-lucide="activity"></i> Progresso de Envios
+      </h3>
+
+      <div style="display:flex; gap:.5rem; flex-wrap: wrap; margin:.75rem 0;">
+        <button id="progress-start" class="btn btn-primary"><i data-lucide="rss"></i> Ouvir atualizações</button>
+        <button id="progress-stop" class="btn btn-secondary"><i data-lucide="square"></i> Parar</button>
+        <button id="progress-clear" class="btn btn-secondary"><i data-lucide="eraser"></i> Limpar</button>
+      </div>
+
+      <div class="kpi-progress" style="margin-bottom:.5rem;">
+        <div class="progress-bar"><div class="progress-fill" id="progress-bar-fill" style="width:0%"></div></div>
+        <div class="progress-info">
+          <span id="progress-text">0/0</span>
+          <span id="progress-last">—</span>
+        </div>
+      </div>
+
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Nome</th>
+              <th>Telefone</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="progress-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  clientView.appendChild(content);
+
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
+    document.getElementById("tab-progress").classList.add("active");
+  });
+
+  // Wire up buttons
+  document.getElementById("progress-start").addEventListener("click", () => {
+    startProgressStream(state.selected);
+  });
+  document.getElementById("progress-stop").addEventListener("click", () => {
+    stopProgressStream();
+  });
+  document.getElementById("progress-clear").addEventListener("click", () => {
+    clearProgressUI();
+  });
+}
+
+function clearProgressUI() {
+  progressBuffer = [];
+  progressTotals = { total: 0, processed: 0, success: 0, error: 0, skipped: 0 };
+  const tbody = document.getElementById("progress-table-body");
+  if (tbody) tbody.innerHTML = "";
+  const fill = document.getElementById("progress-bar-fill");
+  if (fill) fill.style.width = "0%";
+  const txt = document.getElementById("progress-text");
+  if (txt) txt.textContent = "0/0";
+  const last = document.getElementById("progress-last");
+  if (last) last.textContent = "—";
+}
+
+function startProgressStream(slug) {
+  try { stopProgressStream(); } catch {}
+  if (!slug) return;
+
+  // limpa a UI ao (re)começar a ouvir
+  clearProgressUI();
+
+  const absolute = (API_BASE_URL && API_BASE_URL.startsWith("http"))
+    ? `${API_BASE_URL}/api/progress?client=${encodeURIComponent(slug)}`
+    : `/api/progress?client=${encodeURIComponent(slug)}`;
+
+  const src = new EventSource(absolute);
+  progressEvtSource = src;
+
+  src.addEventListener("open", () => {
+    const last = document.getElementById("progress-last");
+    if (last) last.textContent = new Date().toLocaleString("pt-BR");
+  });
+
+  // "message" recebe start/item/end — o backend envia também um replay do último ciclo
+  src.addEventListener("message", (ev) => {
+    try {
+      const data = JSON.parse(ev.data || "{}");
+      handleProgressEvent(data);
+    } catch (e) {
+      console.debug("SSE parse error", e);
+    }
+  });
+
+  src.addEventListener("error", (err) => {
+    console.debug("SSE error", err);
+  });
+}
+
+function stopProgressStream() {
+  if (progressEvtSource) {
+    try { progressEvtSource.close(); } catch {}
+    progressEvtSource = null;
+  }
+}
+
+function handleProgressEvent(evt) {
+  const type = evt.type || "item";
+  if (type === "start") {
+    progressTotals.total = Number(evt.total || 0);
+    progressTotals.processed = 0;
+    updateProgressBar();
+    return;
+  }
+  if (type === "end") {
+    if (progressTotals.total > 0) progressTotals.processed = progressTotals.total;
+    updateProgressBar();
+    return;
+  }
+
+  // tipo item
+  progressTotals.processed += 1;
+  if (evt.status === "success") progressTotals.success += 1;
+  else if (evt.status === "error") progressTotals.error += 1;
+  else progressTotals.skipped += 1;
+
+  progressBuffer.push({
+    at: evt.at || new Date().toISOString(),
+    name: evt.name || "-",
+    phone: evt.phone || "-",
+    status: evt.status || (evt.ok ? "success" : "error"),
+  });
+  if (progressBuffer.length > 200) progressBuffer.shift();
+
+  renderProgressTable();
+  updateProgressBar();
+}
+
+function renderProgressTable() {
+  const tbody = document.getElementById("progress-table-body");
+  if (!tbody) return;
+  if (progressBuffer.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" style="text-align:center;color:var(--muted);">Sem eventos ainda</td></tr>`;
+    return;
+  }
+  const rows = progressBuffer.slice(-200).reverse().map((it) => {
+    const t = new Date(it.at).toLocaleTimeString("pt-BR", { hour:"2-digit", minute:"2-digit", second:"2-digit" });
+    const statusClass = it.status === "success" ? "status-success" : (it.status === "skipped" ? "status-skipped" : "status-error");
+    return `<tr>
+      <td>${t}</td>
+      <td>${it.name}</td>
+      <td>${it.phone}</td>
+      <td><span class="${statusClass}">${it.status}</span></td>
+    </tr>`;
+  });
+  tbody.innerHTML = rows.join("");
+}
+
+function updateProgressBar() {
+  const fill = document.getElementById("progress-bar-fill");
+  const txt = document.getElementById("progress-text");
+  const last = document.getElementById("progress-last");
+  const { total, processed } = progressTotals;
+  const pct = total > 0 ? Math.min(100, Math.round((processed/total)*100)) : 0;
+  if (fill) fill.style.width = `${pct}%`;
+  if (txt) txt.textContent = `${processed}/${total}`;
+  if (last && processed>0) last.textContent = new Date().toLocaleString("pt-BR");
+}
+
 // ==========================================
 
 // Inicia o loop de processamento para um cliente
@@ -664,10 +732,6 @@ async function runLoop(clientSlug) {
     const slug = clientSlug || state.selected;
     if (!slug) throw new Error("Nenhum cliente selecionado");
     const { iaAuto } = loadLocalSettings(slug);
-    // Antes de iniciar o loop no backend, inicializa a UI de progresso e abre o stream SSE
-    initProgress(slug);
-    connectProgressStream(slug);
-
     await api("/api/loop", {
       method: "POST",
       body: JSON.stringify({ client: slug, iaAuto }),
@@ -770,7 +834,7 @@ function renderClientList() {
 
 // Select Client
 async function selectClient(slug) {
-  try { disconnectProgressStream(); } catch {}
+  try { stopProgressStream(); } catch {}
   state.selected = slug;
 
   state.queue.page = 1;
@@ -790,6 +854,7 @@ async function selectClient(slug) {
 
   injectLoopHudOnce();
   injectConfigTabOnce();
+  injectProgressTabOnce();
 
   state.lastSent = loadLastSent(slug);
   renderLoopHud();
@@ -825,7 +890,7 @@ function renderKPIs() {
   if (pendEl) pendEl.textContent = state.kpis.pendentes || 0;
   if (filaEl) filaEl.textContent = state.kpis.fila || 0;
 
-  renderLoopHud();
+  renderLoopHud(); // mantém HUD coerente com KPIs
 }
 
 // Load Queue
@@ -967,7 +1032,7 @@ window.markAsSent = async (phone, name = "") => {
   }
 };
 
-// Modal de Remover + integração com "Último envio" quando checkbox marcado
+// Modal de Remover (mantido) + integração com "Último envio" quando checkbox marcado
 window.removeFromQueueFromBtn = (btn) => {
   const phone = btn?.dataset?.phone;
   const name = btn?.dataset?.name || "";
@@ -997,7 +1062,6 @@ window.removeFromQueue = (phone) => {
         body: JSON.stringify({ client: state.selected, phone, markSent: checkbox.checked }),
       });
 
-      // Se marcou "enviada", salva "Último envio" com fallback local
       if (checkbox.checked && state.pendingQueueAction && state.pendingQueueAction.phone === phone) {
         saveLastSent(state.selected, {
           name: state.pendingQueueAction.name || "",
@@ -1111,6 +1175,7 @@ function downloadCSVTemplate() {
 document.addEventListener("DOMContentLoaded", () => {
   injectLoopHudOnce();
   injectConfigTabOnce();
+  injectProgressTabOnce();
 
   const lucide = window.lucide;
   lucide && lucide.createIcons && lucide.createIcons();
