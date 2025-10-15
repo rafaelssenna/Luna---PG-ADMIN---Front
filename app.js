@@ -1,699 +1,1128 @@
-/* ==========================================
-   Luna – Painel (Dark UI)
-   app.js
-   ========================================== */
-
-// Base da API (se usar proxy, deixe vazio)
+// Updated App.js with HUD reposition and enriched progress info
+// Configuration
 const API_BASE_URL = (window.API_BASE_URL !== undefined ? window.API_BASE_URL : "");
 
-// ---- Timers / Polling ----
-const AUTO_INTERVAL_MS = 30000;   // auto-run de loop (cliente com auto habilitado)
-const HUD_POLL_MS      = 5000;    // polling leve para KPIs/HUD
+// ====== Novos: Automação no front ======
+const AUTO_INTERVAL_MS = 30000; // 30s
+const HUD_POLL_MS = 5000; // 5s para atualizar progresso quando loop estiver "running"
+const autoTimers = {}; // { [slug]: intervalId }
 
-const autoTimers = {};            // { [slug]: intervalId }
-
-// ---- Helpers de storage/local ----
-function settingsKey(slug){ return `luna_pg_client_settings__${slug}` }
-function lastSentKey(slug){ return `luna_pg_last_sent__${slug}` }
-
-function loadLocalSettings(slug){
-  try{
-    return JSON.parse(localStorage.getItem(settingsKey(slug))) || {
-      autoRun:false, iaAuto:false, instanceUrl:"", instanceToken:"",
-      instanceAuthHeader:"token", instanceAuthScheme:"", lastRunAt:null
-    };
-  }catch{
-    return { autoRun:false, iaAuto:false, instanceUrl:"", instanceToken:"",
-      instanceAuthHeader:"token", instanceAuthScheme:"", lastRunAt:null };
+function settingsKey(slug) {
+  return `luna_pg_client_settings__${slug}`;
+}
+function lastSentKey(slug) {
+  return `luna_pg_last_sent__${slug}`;
+}
+function loadLastSent(slug) {
+  try { return JSON.parse(localStorage.getItem(lastSentKey(slug))) || null; } catch { return null; }
+}
+function saveLastSent(slug, obj) {
+  try { localStorage.setItem(lastSentKey(slug), JSON.stringify(obj)); } catch {}
+  if (state.selected === slug) {
+    state.lastSent = obj;
+    renderLoopHud();
   }
 }
-function saveLocalSettings(slug, partial){
+function loadLocalSettings(slug) {
+  try {
+    return JSON.parse(localStorage.getItem(settingsKey(slug))) || {
+      autoRun: false,
+      iaAuto: false,
+      instanceUrl: "",
+      instanceToken: "",
+      instanceAuthHeader: "token",
+      instanceAuthScheme: "",
+      lastRunAt: null,
+    };
+  } catch {
+    return {
+      autoRun: false,
+      iaAuto: false,
+      instanceUrl: "",
+      instanceToken: "",
+      instanceAuthHeader: "token",
+      instanceAuthScheme: "",
+      lastRunAt: null,
+    };
+  }
+}
+function saveLocalSettings(slug, partial) {
   const next = { ...loadLocalSettings(slug), ...(partial || {}) };
   localStorage.setItem(settingsKey(slug), JSON.stringify(next));
   return next;
 }
-function loadLastSent(slug){
-  try{ return JSON.parse(localStorage.getItem(lastSentKey(slug))) || null; }catch{ return null; }
+function startAutoFor(slug) {
+  stopAutoFor(slug);
+  autoTimers[slug] = setInterval(async () => {
+    try {
+      const { iaAuto } = loadLocalSettings(slug);
+      await api("/api/loop", {
+        method: "POST",
+        body: JSON.stringify({ client: slug, iaAuto }),
+      });
+      if (state.selected === slug) {
+        const iso = new Date().toISOString();
+        state.settings = saveLocalSettings(slug, { lastRunAt: iso });
+        renderSettings();
+        await Promise.all([
+          loadQueue(),
+          loadTotals(),
+          (async () => {
+            const stats = await api(`/api/stats?client=${slug}`);
+            state.kpis = stats;
+            renderKPIs();
+          })(),
+        ]);
+      }
+      await loadClients();
+    } catch (e) {
+      console.error("Auto-run erro:", e);
+    }
+  }, AUTO_INTERVAL_MS);
 }
-function saveLastSent(slug, obj){
-  try{ localStorage.setItem(lastSentKey(slug), JSON.stringify(obj)); }catch{}
-  if (state.selected === slug){ state.lastSent = obj; renderLoopHud(); renderProgressCard(); }
+function stopAutoFor(slug) {
+  if (autoTimers[slug]) {
+    clearInterval(autoTimers[slug]);
+    delete autoTimers[slug];
+  }
+}
+function applyAutoState(slug) {
+  const { autoRun } = loadLocalSettings(slug);
+  if (autoRun) startAutoFor(slug);
+  else stopAutoFor(slug);
 }
 
-// ---- Estado global ----
+// ======================================
+
+// State Management
 const state = {
   clients: [],
   selected: null,
-  queue:   { items:[], page:1, total:0, pageSize:25, search:"" },
-  totals:  { items:[], page:1, total:0, pageSize:25, search:"", sent:"all" },
-  kpis:    { totais:0, enviados:0, pendentes:0, fila:0 },
-  settings:{ autoRun:false, iaAuto:false, instanceUrl:"", instanceToken:"",
-             instanceAuthHeader:"token", instanceAuthScheme:"", lastRunAt:null, loopStatus:"idle" },
-  lastSent: null,     // { name, phone, at }
-  hudTimer: null,     // polling do HUD
-  pendingQueueAction: null // usado no modal de remover
+  queue: { items: [], page: 1, total: 0, pageSize: 25, search: "" },
+  totals: { items: [], page: 1, total: 0, pageSize: 25, search: "", sent: "all" },
+  kpis: { totais: 0, enviados: 0, pendentes: 0, fila: 0 },
+  // Novos
+  settings: {
+    autoRun: false,
+    iaAuto: false,
+    instanceUrl: "",
+    instanceToken: "",
+    instanceAuthHeader: "token",
+    instanceAuthScheme: "",
+    lastRunAt: null,
+    loopStatus: "idle",
+  },
+  lastSent: null, // {name, phone, at}
+  hudTimer: null, // polling do HUD
+  pendingQueueAction: null, // usado no modal de remover
 };
 
-// ---- API helper ----
-async function api(path, options = {}){
+// ====== API Helpers ======
+async function api(path, options = {}) {
   showLoading();
-  try{
-    const response = await fetch(`${API_BASE_URL}${path}`, {
+  try {
+    const url = `${API_BASE_URL}${path}`;
+    const response = await fetch(url, {
       ...options,
-      headers: { "Content-Type":"application/json", ...(options.headers||{}) }
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
     });
-    if(!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error("[v0] API Error:", error);
+    showToast(`Erro: ${error.message}`, "error");
+    throw error;
+  } finally {
+    hideLoading();
+  }
+}
+// Versão silenciosa (não mostra overlay nem toast) — para polling do HUD
+async function apiSilent(path, options = {}) {
+  try {
+    const url = `${API_BASE_URL}${path}`;
+    const response = await fetch(url, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        ...options.headers,
+      },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
     return await response.json();
-  }catch(err){
-    console.error("[API] error:", err);
-    showToast(err.message || "Falha de rede", "error");
-    throw err;
-  }finally{ hideLoading(); }
+  } catch (err) {
+    // silencioso, apenas loga
+    console.debug("[silent] API error:", err.message);
+    return null;
+  }
 }
 
-// Polling silencioso (sem overlay/toast)
-async function apiSilent(path, options = {}){
-  try{
-    const r = await fetch(`${API_BASE_URL}${path}`, {
-      ...options, headers:{ "Content-Type":"application/json", ...(options.headers||{}) }
+// ====== Configurações no Servidor ======
+async function loadServerSettings(slug) {
+  return api(`/api/client-settings?client=${slug}`);
+}
+async function saveServerSettings(slug, { autoRun, iaAuto, instanceUrl, instanceToken, instanceAuthHeader, instanceAuthScheme }) {
+  return api(`/api/client-settings`, {
+    method: "POST",
+    body: JSON.stringify({
+      client: slug,
+      autoRun: !!autoRun,
+      iaAuto: !!iaAuto,
+      instanceUrl: instanceUrl || null,
+      instanceToken: instanceToken || null,
+      instanceAuthHeader: (instanceAuthHeader || "token"),
+      instanceAuthScheme: (instanceAuthScheme ?? ""),
+    }),
+  });
+}
+async function syncSettingsFromServer(slug) {
+  try {
+    const s = await loadServerSettings(slug);
+    const next = saveLocalSettings(slug, {
+      autoRun: !!s.autoRun,
+      iaAuto: !!s.iaAuto,
+      instanceUrl: s.instanceUrl || "",
+      instanceToken: s.instanceToken || "",
+      instanceAuthHeader: s.instanceAuthHeader || "token",
+      instanceAuthScheme: s.instanceAuthScheme || "",
+      lastRunAt: s.lastRunAt || null,
     });
-    if(!r.ok) throw new Error(`HTTP ${r.status}`);
-    return await r.json();
-  }catch{ return null; }
+    state.settings = { ...next, loopStatus: s.loopStatus || "idle" };
+    renderSettings();
+    applyAutoState(slug);
+    applyHudPolling(); // iniciar/parar polling do HUD conforme status
+  } catch (e) {
+    state.settings = loadLocalSettings(slug);
+    renderSettings();
+    applyAutoState(slug);
+    applyHudPolling();
+  }
 }
 
-// ---- Util ----
-function showLoading(){ const el = document.getElementById("loading-overlay"); el && (el.style.display="flex"); }
-function hideLoading(){ const el = document.getElementById("loading-overlay"); el && (el.style.display="none"); }
+// ====== Toasts / Loading / Util ======
+function showToast(message, type = "info") {
+  const container = document.getElementById("toast-container");
+  const toast = document.createElement("div");
+  toast.className = `toast ${type}`;
 
-function showToast(msg, type="info"){
-  const wrap = document.getElementById("toast-container");
-  if(!wrap) return;
-  const el = document.createElement("div");
-  el.className = `toast ${type}`;
-  el.innerHTML = `<span>${msg}</span>`;
-  wrap.appendChild(el);
-  setTimeout(()=>el.remove(), 4200);
+  const iconMap = {
+    success: "check-circle",
+    error: "x-circle",
+    warning: "alert-circle",
+    info: "info",
+  };
+
+  toast.innerHTML = `
+    <i data-lucide="${iconMap[type]}"></i>
+    <span>${message}</span>
+  `;
+
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.animation = "slideIn 0.3s ease reverse";
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
 }
 
-function formatDate(iso){
-  if(!iso) return "-";
-  const d = new Date(iso);
-  return d.toLocaleString("pt-BR",{day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"});
+function showLoading() {
+  document.getElementById("loading-overlay").style.display = "flex";
 }
-function formatShortTime(iso){
-  if(!iso) return "-";
-  const d = new Date(iso);
-  return d.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+function hideLoading() {
+  document.getElementById("loading-overlay").style.display = "none";
 }
-function escapeAttr(s){ return String(s??"").replace(/"/g,"&quot;"); }
-function normalizeSlug(input){
-  let slug = String(input||"").trim().toLowerCase();
-  if(!slug.startsWith("cliente_")) slug = `cliente_${slug}`;
-  if(!/^cliente_[a-z0-9_]+$/.test(slug)) throw new Error("Slug inválido. Use minúsculas, números e _");
+
+function normalizeSlug(input) {
+  let slug = input.trim().toLowerCase();
+  if (!slug.startsWith("cliente_")) slug = `cliente_${slug}`;
+  const validPattern = /^cliente_[a-z0-9_]+$/;
+  if (!validPattern.test(slug)) {
+    throw new Error("Slug inválido. Use apenas letras minúsculas, números e underscores.");
+  }
   return slug;
 }
 
-// ---- Auto-run ----
-function startAutoFor(slug){
-  stopAutoFor(slug);
-  autoTimers[slug] = setInterval(async()=>{
-    try{
-      const { iaAuto } = loadLocalSettings(slug);
-      await api("/api/loop",{ method:"POST", body:JSON.stringify({ client:slug, iaAuto }) });
-      if(state.selected===slug){
-        state.settings = saveLocalSettings(slug, { lastRunAt:new Date().toISOString() });
-        renderSettings();
-        await Promise.all([ loadQueue(), loadTotals(), refreshStats(slug) ]);
-      }
-      await loadClients();
-    }catch(e){ console.error("[auto-run]", e); }
-  }, AUTO_INTERVAL_MS);
+function formatDate(dateString) {
+  if (!dateString) return "-";
+  const date = new Date(dateString);
+  return date.toLocaleString("pt-BR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
-function stopAutoFor(slug){
-  if(autoTimers[slug]){ clearInterval(autoTimers[slug]); delete autoTimers[slug]; }
+function formatShortTime(dateString) {
+  if (!dateString) return "-";
+  const date = new Date(dateString);
+  return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
 }
-function applyAutoState(slug){ loadLocalSettings(slug).autoRun ? startAutoFor(slug) : stopAutoFor(slug); }
-
-// ---- Settings no servidor ----
-async function loadServerSettings(slug){ return api(`/api/client-settings?client=${slug}`) }
-async function saveServerSettings(slug, payload){
-  return api(`/api/client-settings`, { method:"POST", body:JSON.stringify({ client:slug, ...payload }) });
-}
-async function syncSettingsFromServer(slug){
-  try{
-    const s = await loadServerSettings(slug);
-    const next = saveLocalSettings(slug,{
-      autoRun:!!s.autoRun, iaAuto:!!s.iaAuto, instanceUrl:s.instanceUrl||"",
-      instanceToken:s.instanceToken||"", instanceAuthHeader:s.instanceAuthHeader||"token",
-      instanceAuthScheme:s.instanceAuthScheme||"", lastRunAt:s.lastRunAt||null
-    });
-    state.settings = { ...next, loopStatus: s.loopStatus || "idle" };
-  }catch{
-    state.settings = loadLocalSettings(slug);
-  }
-  renderSettings();
-  applyAutoState(slug);
-  applyHudPolling();
+function escapeAttr(s) {
+  return String(s ?? "").replace(/"/g, "&quot;");
 }
 
-// =======================================================
-// HUD antigo (mantido/compatível) – mas ficará oculto via CSS
-// =======================================================
-function injectLoopHudOnce(){
-  if(document.getElementById("loop-hud")) return;
-  const root = document.querySelector(".client-view"); if(!root) return;
-  const w = document.createElement("div"); w.id = "loop-hud-wrapper";
+// ====== NOVOS: HUD do Loop (injetado no canto direito) ======
+function injectLoopHudOnce() {
+  if (document.getElementById("loop-hud")) return;
+  const clientView = document.querySelector(".client-view");
+  if (!clientView) return;
+  // cria wrapper absoluto dentro de client-view
+  const wrapper = document.createElement("div");
+  wrapper.id = "loop-hud-wrapper";
+  // cria hud propriamente dito
   const hud = document.createElement("div");
   hud.id = "loop-hud";
   hud.className = "loop-hud";
   hud.innerHTML = `
-    <div class="hud-header" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <span class="hud-title" style="color:#94a3b8;font-weight:700;font-size:13px">Progresso</span>
-      <span class="hud-percent" id="hud-percent" style="font-weight:800">0%</span>
+    <div class="hud-indicator" id="hud-indicator" title="Status do loop"></div>
+    <div class="hud-header">
+      <span class="hud-title">Progresso</span>
+      <span class="hud-percent" id="hud-percent">0%</span>
     </div>
-    <div class="hud-bar" style="height:10px;border:1px solid #1f2b3b;border-radius:999px;background:#101826;overflow:hidden">
-      <div id="hud-bar-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#22a7c5);transition:width .35s ease"></div>
+    <div class="hud-bar">
+      <div class="hud-bar-fill" id="hud-bar-fill"></div>
     </div>
-    <div class="hud-meta" style="display:flex;justify-content:space-between;margin-top:8px;font-size:13px;color:#94a3b8">
-      <span id="hud-last">Último envio: —</span>
-      <span id="hud-now"></span>
-    </div>`;
-  w.appendChild(hud); root.appendChild(w);
+    <div class="hud-info">
+      <span id="hud-shipments">Enviados: 0/0</span>
+    </div>
+    <div class="hud-meta">
+      <span id="hud-last-time">Último: —</span>
+    </div>
+  `;
+  wrapper.appendChild(hud);
+  clientView.appendChild(wrapper);
 }
-function renderLoopHud(){
+
+function renderLoopHud() {
   injectLoopHudOnce();
-  const pct  = document.getElementById("hud-percent");
-  const fill = document.getElementById("hud-bar-fill");
-  const last = document.getElementById("hud-last");
-  const now  = document.getElementById("hud-now");
-  if(!pct||!fill||!last||!now) return;
+  const pctEl = document.getElementById("hud-percent");
+  const barEl = document.getElementById("hud-bar-fill");
+  const lastTimeEl = document.getElementById("hud-last-time");
+  const shipmentsEl = document.getElementById("hud-shipments");
+  const indEl = document.getElementById("hud-indicator");
 
-  const t = +state.kpis.totais||0, e = +state.kpis.enviados||0;
-  const p = t>0 ? Math.round(e*100/t) : 0;
-  pct.textContent = `${p}%`; fill.style.width = `${p}%`;
+  if (!pctEl || !barEl || !lastTimeEl || !shipmentsEl || !indEl) return;
 
-  const k = state.kpis||{};
-  const lastPhone = k.last_sent_phone || state.lastSent?.phone || null;
-  const lastAt    = k.last_sent_at    || state.lastSent?.at    || null;
-  last.textContent = `Último envio: ${ lastPhone ? `${lastPhone} — ${formatShortTime(lastAt)}` : "—" }`;
-  now.textContent  = new Date().toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
-}
+  const totais = Number(state.kpis.totais || 0);
+  const enviados = Number(state.kpis.enviados || 0);
+  const progress = totais > 0 ? Math.round((enviados / totais) * 100) : 0;
 
-// Polling leve do HUD/KPIs
-function startHudPolling(){
-  stopHudPolling();
-  state.hudTimer = setInterval(async()=>{
-    if(!state.selected) return;
-    const stats = await apiSilent(`/api/stats?client=${state.selected}`);
-    if(stats){ state.kpis = { ...state.kpis, ...stats }; renderKPIs(); }
-  }, HUD_POLL_MS);
-}
-function stopHudPolling(){ if(state.hudTimer){ clearInterval(state.hudTimer); state.hudTimer=null; } }
-function applyHudPolling(){ (state.settings?.loopStatus==="running") ? startHudPolling() : stopHudPolling(); }
+  pctEl.textContent = `${progress}%`;
+  barEl.style.width = `${progress}%`;
 
-// =======================================================
-// NOVO – Cartão de Progresso (fica no grid de KPIs, à direita)
-// =======================================================
-function injectProgressCardOnce(){
-  const grid = document.querySelector(".kpi-grid"); if(!grid) return;
-  if(document.getElementById("progress-card")) return;
-
-  const card = document.createElement("div");
-  card.id = "progress-card";
-  card.className = "kpi-card";
-  card.innerHTML = `
-    <div class="progress-top">
-      <span class="progress-label">Progresso</span>
-      <span class="progress-percent" id="progress-percent">0%</span>
-    </div>
-    <div class="progress-bar-wrapper">
-      <div class="progress-bar-fill" id="progress-bar-fill"></div>
-    </div>
-    <div class="progress-info">
-      <div><span class="progress-info-label">Último envio:</span> <span class="progress-last-phone" id="progress-last-phone">—</span></div>
-      <div><span class="progress-datetime" id="progress-datetime"></span></div>
-    </div>`;
-  grid.appendChild(card);
-}
-
-function renderProgressCard(){
-  injectProgressCardOnce();
-
-  const pctEl   = document.getElementById("progress-percent");
-  const barEl   = document.getElementById("progress-bar-fill");
-  const phoneEl = document.getElementById("progress-last-phone");
-  const dtEl    = document.getElementById("progress-datetime");
-  if(!pctEl||!barEl||!phoneEl||!dtEl) return;
-
-  const t = +state.kpis.totais||0, e = +state.kpis.enviados||0;
-  const p = t>0 ? Math.round(e*100/t) : 0;
-  pctEl.textContent = `${p}%`;
-  barEl.style.width = `${p}%`;
-
-  const running = (state.settings?.loopStatus || "idle")==="running";
+  // animação da barra quando loop ativo
+  const running = (state.settings?.loopStatus || "idle") === "running";
+  indEl.classList.toggle("active", running);
   barEl.classList.toggle("active", running);
 
-  const k = state.kpis||{};
-  const lastPhone = k.last_sent_phone || state.lastSent?.phone || null;
-  const lastAt    = k.last_sent_at    || state.lastSent?.at    || null;
+  // Atualiza contagem de envios
+  shipmentsEl.textContent = `Enviados: ${enviados}/${totais}`;
 
-  phoneEl.textContent = lastPhone || "—";
-  dtEl.textContent    = lastAt ? formatDate(lastAt) : "";
+  // Último envio: usa info de KPIs ou fallback local
+  const k = state.kpis || {};
+  const lastAt = k.last_sent_at || state.lastSent?.at || null;
+  // Se backend fornecer last_sent_at usamos a data/hora; caso contrário, mostra horário local
+  if (lastAt) {
+    lastTimeEl.textContent = `Último: ${formatDate(lastAt)}`;
+  } else {
+    lastTimeEl.textContent = `Último: —`;
+  }
 }
 
-// =======================================================
-// Aba de Config (cliente) – opcional
-// =======================================================
-function injectConfigTabOnce(){
-  if(document.getElementById("tab-config")) return;
+function startHudPolling() {
+  stopHudPolling();
+  state.hudTimer = setInterval(async () => {
+    try {
+      if (!state.selected) return;
+      const stats = await apiSilent(`/api/stats?client=${state.selected}`);
+      if (stats) {
+        // Se o backend já enviar last_sent_*, usamos
+        state.kpis = { ...state.kpis, ...stats };
+        renderKPIs(); // mantém KPIs sincronizados
+      }
+      renderLoopHud();
+    } catch (e) {
+      console.debug("HUD polling erro:", e?.message || e);
+    }
+  }, HUD_POLL_MS);
+}
+function stopHudPolling() {
+  if (state.hudTimer) {
+    clearInterval(state.hudTimer);
+    state.hudTimer = null;
+  }
+}
+function applyHudPolling() {
+  const running = (state.settings?.loopStatus || "idle") === "running";
+  if (running) startHudPolling();
+  else stopHudPolling();
+}
+
+// ====== NOVOS: Aba Config (injetada) ======
+function injectConfigTabOnce() {
+  if (document.querySelector('.tab[data-tab="config"]') && document.getElementById("tab-config")) {
+    return;
+  }
+
   const tabs = document.querySelector(".tabs");
-  const root = document.getElementById("client-view");
-  if(!tabs||!root) return;
+  const clientView = document.getElementById("client-view");
+  if (!tabs || !clientView) return;
 
   const btn = document.createElement("button");
-  btn.className="tab"; btn.dataset.tab="config"; btn.textContent="Config";
+  btn.className = "tab";
+  btn.dataset.tab = "config";
+  btn.innerHTML = `<i data-lucide="settings"></i>Config`;
   tabs.appendChild(btn);
 
   const content = document.createElement("div");
-  content.id="tab-config"; content.className="tab-content";
+  content.id = "tab-config";
+  content.className = "tab-content";
   content.innerHTML = `
     <div class="form-card">
       <h3>Configurações do Cliente</h3>
+
       <div class="checkbox-group">
-        <label><input type="checkbox" id="auto-run-toggle"> <span>Execução automática do loop</span></label>
+        <label>
+          <input type="checkbox" id="auto-run-toggle">
+          <span>Execução automática do loop</span>
+        </label>
       </div>
-      <div class="checkbox-group" style="margin-top:8px">
-        <label><input type="checkbox" id="ia-auto-toggle"> <span>IA automática</span></label>
+
+      <div class="checkbox-group" style="margin-top:.5rem;">
+        <label>
+          <input type="checkbox" id="ia-auto-toggle">
+          <span>IA automática</span>
+        </label>
       </div>
-      <div class="form-group" style="margin-top:10px">
+
+      <div class="form-group" style="margin-top:1rem;">
         <label for="instance-url">Instância (URL de envio da IA)</label>
         <input type="url" id="instance-url" placeholder="https://minha-instancia.exemplo/send/text">
       </div>
-      <div class="form-group">
+
+      <div class="form-group" style="margin-top:.5rem;">
         <label for="instance-token">Token da Instância</label>
-        <input type="text" id="instance-token" placeholder="cole o token da instância">
+        <input type="text" id="instance-token" placeholder="cole o token da instância aqui">
       </div>
-      <div class="form-group">
+
+      <div class="form-group" style="margin-top:.5rem;">
         <label for="instance-header">Cabeçalho do Token</label>
-        <input type="text" id="instance-header" value="token">
+        <input type="text" id="instance-header" placeholder="token ou Authorization" value="token">
       </div>
-      <div class="form-group">
+
+      <div class="form-group" style="margin-top:.5rem;">
         <label for="instance-scheme">Esquema (opcional)</label>
         <input type="text" id="instance-scheme" placeholder="Bearer (ou deixe vazio)">
       </div>
 
-      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px">
-        <button class="btn btn-primary" id="save-settings">Salvar</button>
-        <button class="btn btn-secondary" id="run-now">Executar Agora</button>
-        <button class="btn btn-danger" id="delete-client">Apagar Tabela</button>
-        <span id="settings-status" style="color:var(--muted);font-size:.9rem"></span>
+      <div style="margin-top:1rem; display:flex; gap:.5rem; align-items:center; flex-wrap: wrap;">
+        <button id="save-settings" class="btn btn-primary">
+          <i data-lucide="save"></i>
+          <span>Salvar</span>
+        </button>
+        <button id="run-now" class="btn btn-secondary">
+          <i data-lucide="play-circle"></i>
+          <span>Executar Agora</span>
+        </button>
+        <button id="delete-client" class="btn btn-danger" title="Apagar tabelas e configurações deste cliente">
+          <i data-lucide="trash-2"></i>
+          <span>Apagar Tabela</span>
+        </button>
+        <span id="settings-status" style="color: var(--muted); font-size:.9rem; margin-left:.25rem;"></span>
       </div>
     </div>
   `;
-  document.getElementById("client-view").appendChild(content);
+  clientView.appendChild(content);
 
-  btn.addEventListener("click", ()=>{
-    document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
-    document.querySelectorAll(".tab-content").forEach(c=>c.classList.remove("active"));
-    btn.classList.add("active"); content.classList.add("active");
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".tab-content").forEach((c) => c.classList.remove("active"));
+    document.getElementById("tab-config").classList.add("active");
   });
 
-  document.getElementById("save-settings").addEventListener("click", async()=>{
-    const payload = {
-      autoRun:document.getElementById("auto-run-toggle").checked,
-      iaAuto:document.getElementById("ia-auto-toggle").checked,
-      instanceUrl:document.getElementById("instance-url").value.trim(),
-      instanceToken:document.getElementById("instance-token").value.trim(),
-      instanceAuthHeader:document.getElementById("instance-header").value.trim() || "token",
-      instanceAuthScheme:document.getElementById("instance-scheme").value.trim()
+  document.getElementById("save-settings").addEventListener("click", async () => {
+    const values = {
+      autoRun: document.getElementById("auto-run-toggle").checked,
+      iaAuto: document.getElementById("ia-auto-toggle").checked,
+      instanceUrl: document.getElementById("instance-url").value.trim(),
+      instanceToken: document.getElementById("instance-token").value.trim(),
+      instanceAuthHeader: document.getElementById("instance-header").value.trim() || "token",
+      instanceAuthScheme: document.getElementById("instance-scheme").value.trim(),
     };
-    try{ await saveServerSettings(state.selected, payload); }catch{}
-    state.settings = saveLocalSettings(state.selected, payload);
-    renderSettings(); renderProgressCard(); showToast("Configurações salvas","success");
+    try { await saveServerSettings(state.selected, values); } catch {}
+    const next = saveLocalSettings(state.selected, values);
+    state.settings = next;
+    applyAutoState(state.selected);
+    renderSettings();
+    renderLoopHud();
+    applyHudPolling();
+    showToast("Configurações salvas", "success");
   });
 
-  document.getElementById("run-now").addEventListener("click", ()=> runLoop(state.selected) );
-
-  document.getElementById("delete-client").addEventListener("click", async()=>{
-    const slug = state.selected; if(!slug) return;
-    if(!confirm(`APAGAR tabelas do cliente ${slug}? Essa ação não pode ser desfeita.`)) return;
-    const again = prompt(`Digite o slug para confirmar:\n${slug}`); if(again!==slug) return;
-    try{
-      await api("/api/delete-client",{ method:"DELETE", body:JSON.stringify({ client:slug }) });
-      stopAutoFor(slug); localStorage.removeItem(settingsKey(slug)); localStorage.removeItem(lastSentKey(slug));
-      state.selected=null; state.lastSent=null; stopHudPolling(); showToast("Tabelas apagadas","success");
-      await loadClients(); document.getElementById("client-view").style.display="none"; document.getElementById("empty-state").style.display="block";
-    }catch{ showToast("Falha ao apagar tabelas","error"); }
+  document.getElementById("run-now").addEventListener("click", () => {
+    runLoop(state.selected);
   });
+
+  // Botão Apagar Tabela (com dupla confirmação e limpeza do estado local)
+  document.getElementById("delete-client").addEventListener("click", async () => {
+    try {
+      const slug = state.selected;
+      if (!slug) return;
+
+      const confirm1 = window.confirm(
+        `Tem certeza que deseja APAGAR as tabelas "${slug}" e "${slug}_totais" e remover as configurações deste cliente?\n\n` +
+        `Esta ação NÃO pode ser desfeita.`
+      );
+      if (!confirm1) return;
+
+      const typed = window.prompt(`Para confirmar, digite o slug do cliente exatamente como abaixo:\n\n${slug}`);
+      if (typed !== slug) {
+        showToast("Confirmação cancelada.", "warning");
+        return;
+      }
+
+      await api("/api/delete-client", {
+        method: "DELETE",
+        body: JSON.stringify({ client: slug }),
+      });
+
+      // Limpa estado local e timers
+      stopAutoFor(slug);
+      localStorage.removeItem(settingsKey(slug));
+      localStorage.removeItem(lastSentKey(slug));
+      state.lastSent = null;
+      stopHudPolling();
+
+      showToast(`Tabelas de ${slug} apagadas com sucesso`, "success");
+
+      // Recarrega clientes e seleciona outro (ou mostra vazio)
+      await loadClients();
+      if (state.clients.length > 0) {
+        selectClient(state.clients[0].slug);
+      } else {
+        state.selected = null;
+        document.getElementById("client-view").style.display = "none";
+        document.getElementById("empty-state").style.display = "block";
+      }
+    } catch (e) {
+      const msg = String(e?.message || "");
+      if (msg.includes("HTTP 409")) {
+        showToast("Não é possível apagar enquanto o loop está em execução. Tente novamente em instantes.", "warning");
+      } else {
+        showToast("Falha ao apagar as tabelas do cliente", "error");
+      }
+      console.error("delete-client error:", e);
+    }
+  });
+
+  if (window.lucide && typeof window.lucide.createIcons === "function") {
+    window.lucide.createIcons();
+  }
 }
 
-function renderSettings(){
-  const a=document.getElementById("auto-run-toggle"),
-        i=document.getElementById("ia-auto-toggle"),
-        u=document.getElementById("instance-url"),
-        t=document.getElementById("instance-token"),
-        h=document.getElementById("instance-header"),
-        s=document.getElementById("instance-scheme"),
-        st=document.getElementById("settings-status");
-  if(!a||!i||!st) return;
-  const cfg = state.settings || {};
-  a.checked=!!cfg.autoRun; i.checked=!!cfg.iaAuto;
-  if(u) u.value=cfg.instanceUrl||""; if(t) t.value=cfg.instanceToken||"";
-  if(h) h.value=cfg.instanceAuthHeader||"token"; if(s) s.value=cfg.instanceAuthScheme||"";
-  st.textContent = `Status: ${cfg.loopStatus||"idle"} | Última execução: ${cfg.lastRunAt?formatDate(cfg.lastRunAt):"-"}`;
+function renderSettings() {
+  const autoEl = document.getElementById("auto-run-toggle");
+  const iaEl = document.getElementById("ia-auto-toggle");
+  const instanceEl = document.getElementById("instance-url");
+  const tokenEl = document.getElementById("instance-token");
+  const headerEl = document.getElementById("instance-header");
+  const schemeEl = document.getElementById("instance-scheme");
+  const statusEl = document.getElementById("settings-status");
+  if (!autoEl || !iaEl || !statusEl) return;
+
+  const cfg = state.settings || {
+    autoRun: false, iaAuto: false, instanceUrl: "",
+    instanceToken: "", instanceAuthHeader: "token", instanceAuthScheme: "",
+    lastRunAt: null, loopStatus: "idle"
+  };
+
+  autoEl.checked = !!cfg.autoRun;
+  iaEl.checked = !!cfg.iaAuto;
+  if (instanceEl) instanceEl.value = cfg.instanceUrl || "";
+  if (tokenEl) tokenEl.value = cfg.instanceToken || "";
+  if (headerEl) headerEl.value = (cfg.instanceAuthHeader || "token");
+  if (schemeEl) schemeEl.value = (cfg.instanceAuthScheme || "");
+
+  const last = cfg.lastRunAt ? formatDate(cfg.lastRunAt) : "-";
+  const st = cfg.loopStatus || "idle";
+  statusEl.textContent = `Status: ${st} | Última execução: ${last}`;
+}
+// ==========================================
+
+// Inicia o loop de processamento para um cliente
+async function runLoop(clientSlug) {
+  try {
+    const slug = clientSlug || state.selected;
+    if (!slug) throw new Error("Nenhum cliente selecionado");
+    const { iaAuto } = loadLocalSettings(slug);
+    await api("/api/loop", {
+      method: "POST",
+      body: JSON.stringify({ client: slug, iaAuto }),
+    });
+    const iso = new Date().toISOString();
+    state.settings = saveLocalSettings(slug, { lastRunAt: iso });
+    try {
+      const serv = await loadServerSettings(slug);
+      state.settings = { ...state.settings, loopStatus: serv.loopStatus || state.settings.loopStatus || "idle" };
+    } catch {}
+    renderSettings();
+    renderLoopHud();
+    applyHudPolling();
+
+    showToast(`Loop iniciado para ${slug}`, "success");
+
+    if (state.selected === slug) {
+      await Promise.all([
+        loadQueue(),
+        loadTotals(),
+        loadClients(),
+        (async () => {
+          const stats = await api(`/api/stats?client=${slug}`);
+          state.kpis = stats;
+          renderKPIs();
+        })(),
+      ]);
+    } else {
+      await loadClients();
+    }
+  } catch (error) {
+    console.error("[v0] Failed to run loop:", error);
+  }
 }
 
-// =======================================================
-// Core – Clients / KPIs / Queue / Totals
-// =======================================================
-async function loadClients(){
-  try{
-    const list = await api("/api/clients");
-    state.clients = (list||[]).sort((a,b)=>a.slug.localeCompare(b.slug));
+// Load Clients
+async function loadClients() {
+  try {
+    const clients = await api("/api/clients");
+    state.clients = clients.sort((a, b) => a.slug.localeCompare(b.slug));
     renderClientList();
-    if(!state.selected && state.clients.length) selectClient(state.clients[0].slug);
-    else if(state.selected) await loadClientData(state.selected);
-  }catch(e){ console.error("loadClients",e); }
+
+    if (!state.selected && state.clients.length > 0) {
+      selectClient(state.clients[0].slug);
+    } else if (state.selected) {
+      await loadClientData(state.selected);
+    }
+  } catch (error) {
+    console.error("[v0] Failed to load clients:", error);
+  }
 }
 
-function renderClientList(){
+// Render Client List
+function renderClientList() {
   const container = document.getElementById("client-list");
-  const q = (document.getElementById("client-search")?.value || "").toLowerCase();
-  const items = state.clients.filter(c => c.slug.toLowerCase().includes(q));
-  if(!container) return;
-  container.innerHTML = items.length ? items.map(c=>{
-    const active = c.slug===state.selected ? "active" : "";
-    const badge = (c.queueCount!==undefined) ? `<span class="client-badge">${c.queueCount}</span>` : "";
-    const status = c.loopStatus || "idle";
-    const dot = `<span class="status-dot status-${status}"></span>`;
-    return `
-      <div class="client-item ${active}" data-slug="${c.slug}">
-        <span class="client-name">${dot}${c.slug}</span>
-        <div class="client-actions">
-          ${badge}
-          <button class="btn-icon run-loop-btn" data-slug="${c.slug}" title="Executar loop">▶</button>
-        </div>
-      </div>`;
-  }).join("") : `<div style="padding:12px;color:var(--muted)">Nenhum cliente</div>`;
+  const searchTerm = document.getElementById("client-search").value.toLowerCase();
+  const filteredClients = state.clients.filter((client) => client.slug.toLowerCase().includes(searchTerm));
 
-  container.querySelectorAll(".client-item").forEach(el=>{
-    el.addEventListener("click",()=>selectClient(el.dataset.slug));
+  if (filteredClients.length === 0) {
+    container.innerHTML =
+      '<div style="padding: 1rem; text-align: center; color: var(--muted);">Nenhum cliente encontrado</div>';
+    return;
+  }
+
+  container.innerHTML = filteredClients
+    .map((client) => {
+      const active = state.selected === client.slug ? "active" : "";
+      const badge = client.queueCount !== undefined ? `<span class="client-badge">${client.queueCount}</span>` : "";
+      const loopButton = `<button class="btn-icon run-loop-btn" data-slug="${client.slug}" title="Executar loop" aria-label="Executar loop"><i data-lucide="play-circle"></i></button>`;
+      const status = client.loopStatus || "idle";
+      const statusDot = `<span class="status-dot status-${status}"></span>`;
+      return `
+        <div class="client-item ${active}" data-slug="${client.slug}" role="listitem">
+          <span class="client-name">${statusDot}${client.slug}</span>
+          <div class="client-actions">
+            ${badge}
+            ${loopButton}
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  container.querySelectorAll(".client-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      selectClient(item.dataset.slug);
+    });
   });
-  container.querySelectorAll(".run-loop-btn").forEach(btn=>{
-    btn.addEventListener("click",(e)=>{ e.stopPropagation(); runLoop(btn.dataset.slug); });
+  container.querySelectorAll(".run-loop-btn").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const slug = btn.dataset.slug;
+      runLoop(slug);
+    });
   });
+  if (window.lucide && typeof window.lucide.createIcons === "function") {
+    window.lucide.createIcons();
+  }
 }
 
-async function selectClient(slug){
+// Select Client
+async function selectClient(slug) {
   state.selected = slug;
-  state.queue.page=1; state.queue.search="";
-  state.totals.page=1; state.totals.search=""; state.totals.sent="all";
 
-  document.getElementById("empty-state").style.display="none";
-  document.getElementById("client-view").style.display="block";
+  state.queue.page = 1;
+  state.queue.search = "";
+  state.totals.page = 1;
+  state.totals.search = "";
+  state.totals.sent = "all";
+
+  renderClientList();
+  document.getElementById("empty-state").style.display = "none";
+  document.getElementById("client-view").style.display = "block";
   document.getElementById("client-title").textContent = slug;
+
+  document.getElementById("queue-search").value = "";
+  document.getElementById("totals-search").value = "";
+  document.getElementById("totals-filter").value = "all";
 
   injectLoopHudOnce();
   injectConfigTabOnce();
-  injectProgressCardOnce();
 
   state.lastSent = loadLastSent(slug);
-  renderLoopHud(); renderProgressCard();
+  renderLoopHud();
 
   await loadClientData(slug);
   await syncSettingsFromServer(slug);
+  applyHudPolling();
 }
 
-async function refreshStats(slug){
-  const stats = await api(`/api/stats?client=${slug}`);
-  state.kpis = stats||{ totais:0,enviados:0,pendentes:0,fila:0 };
-  renderKPIs();
+// Load Client Data
+async function loadClientData(slug) {
+  try {
+    const stats = await api(`/api/stats?client=${slug}`);
+    state.kpis = stats;
+    renderKPIs();
+    renderLoopHud();
+
+    await loadQueue();
+    await loadTotals();
+  } catch (error) {
+    console.error("[v0] Failed to load client data:", error);
+  }
 }
 
-async function loadClientData(slug){
-  try{
-    await refreshStats(slug);
-    await loadQueue(); await loadTotals();
-  }catch(e){ console.error("loadClientData", e); }
-}
-
-function renderKPIs(){
+// Render KPIs
+function renderKPIs() {
   const totalsEl   = document.getElementById("kpi-totais");
   const enviadosEl = document.getElementById("kpi-enviados");
   const pendEl     = document.getElementById("kpi-pendentes");
   const filaEl     = document.getElementById("kpi-fila");
+  if (totalsEl) totalsEl.textContent = state.kpis.totais || 0;
+  if (enviadosEl) enviadosEl.textContent = state.kpis.enviados || 0;
+  if (pendEl) pendEl.textContent = state.kpis.pendentes || 0;
+  if (filaEl) filaEl.textContent = state.kpis.fila || 0;
 
-  if(totalsEl)   totalsEl.textContent   = state.kpis.totais   || 0;
-  if(enviadosEl) enviadosEl.textContent = state.kpis.enviados || 0;
-  if(pendEl)     pendEl.textContent     = state.kpis.pendentes|| 0;
-  if(filaEl)     filaEl.textContent     = state.kpis.fila     || 0;
-
-  renderLoopHud();      // compatibilidade (oculto por CSS)
-  renderProgressCard(); // cartão oficial
+  renderLoopHud(); // mantém HUD coerente com KPIs
 }
 
-// ---- Queue ----
-async function loadQueue(){
-  try{
-    const { page,pageSize,search } = state.queue;
-    const params = new URLSearchParams({ client:state.selected, page, pageSize, search });
-    const resp = await api(`/api/queue?${params}`);
-    state.queue.items = resp.items || resp || [];
-    state.queue.total = resp.total || state.queue.items.length || 0;
+// Load Queue
+async function loadQueue() {
+  try {
+    const { page, pageSize, search } = state.queue;
+    const params = new URLSearchParams({ client: state.selected, page, pageSize, search });
+    const response = await api(`/api/queue?${params}`);
+    state.queue.items = response.items || response;
+    state.queue.total = response.total || response.length || 0;
     renderQueue();
-  }catch(e){ console.error("loadQueue",e); }
+  } catch (error) {
+    console.error("[v0] Failed to load queue:", error);
+  }
 }
 
-function renderQueue(){
+// Render Queue
+function renderQueue() {
   const tbody = document.getElementById("queue-table-body");
-  if(!tbody) return;
-  if(!state.queue.items.length){
-    tbody.innerHTML = `<tr><td colspan="3" style="text-align:center;color:var(--muted)">Nenhum contato na fila</td></tr>`;
-  }else{
-    tbody.innerHTML = state.queue.items.map(it=>`
+  if (state.queue.items.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align: center; color: var(--muted);">Nenhum contato na fila</td></tr>';
+  } else {
+    tbody.innerHTML = state.queue.items
+      .map((item) => `
       <tr>
-        <td>${it.name||"-"}</td>
-        <td>${it.phone||"-"}</td>
+        <td>${item.name || "-"}</td>
+        <td>${item.phone || "-"}</td>
         <td>
           <div class="table-actions">
-            <button class="btn btn-sm btn-primary" data-phone="${escapeAttr(it.phone)}" data-name="${escapeAttr(it.name||"")}"
-                    onclick="markAsSentFromBtn(this)">Marcar Enviada</button>
-            <button class="btn btn-sm btn-danger" data-phone="${escapeAttr(it.phone)}" data-name="${escapeAttr(it.name||"")}"
-                    onclick="removeFromQueueFromBtn(this)">Remover</button>
+            <button class="btn btn-sm btn-primary"
+                    data-phone="${escapeAttr(item.phone)}"
+                    data-name="${escapeAttr(item.name || "")}"
+                    onclick="markAsSentFromBtn(this)">
+              <i data-lucide="check"></i>
+              Marcar Enviada
+            </button>
+            <button class="btn btn-sm btn-danger"
+                    data-phone="${escapeAttr(item.phone)}"
+                    data-name="${escapeAttr(item.name || "")}"
+                    onclick="removeFromQueueFromBtn(this)">
+              <i data-lucide="trash-2"></i>
+              Remover
+            </button>
           </div>
         </td>
-      </tr>`).join("");
+      </tr>
+    `)
+      .join("");
   }
-  const totalPages = Math.ceil((state.queue.total||0) / state.queue.pageSize);
-  document.getElementById("queue-page-info").textContent = `Página ${state.queue.page} de ${totalPages||1} (${state.queue.total} itens)`;
-  document.getElementById("queue-prev").disabled = state.queue.page<=1;
-  document.getElementById("queue-next").disabled = state.queue.page>=totalPages;
+
+  const totalPages = Math.ceil(state.queue.total / state.queue.pageSize);
+  document.getElementById("queue-page-info").textContent = `Página ${state.queue.page} de ${totalPages || 1} (${state.queue.total} itens)`;
+  document.getElementById("queue-prev").disabled = state.queue.page === 1;
+  document.getElementById("queue-next").disabled = state.queue.page >= totalPages;
+
+  if (window.lucide && typeof window.lucide.createIcons === "function") {
+    window.lucide.createIcons();
+  }
 }
 
-// ---- Totals (histórico) ----
-async function loadTotals(){
-  try{
-    const { page,pageSize,search,sent } = state.totals;
-    const params = new URLSearchParams({ client:state.selected, page, pageSize, search, sent });
-    const resp = await api(`/api/totals?${params}`);
-    state.totals.items = resp.items || resp || [];
-    state.totals.total = resp.total || state.totals.items.length || 0;
+// Load Totals
+async function loadTotals() {
+  try {
+    const { page, pageSize, search, sent } = state.totals;
+    const params = new URLSearchParams({ client: state.selected, page, pageSize, search, sent });
+    const response = await api(`/api/totals?${params}`);
+    state.totals.items = response.items || response;
+    state.totals.total = response.total || response.length || 0;
     renderTotals();
-  }catch(e){ console.error("loadTotals",e); }
-}
-function renderTotals(){
-  const tbody = document.getElementById("totals-table-body");
-  if(!tbody) return;
-  if(!state.totals.items.length){
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--muted)">Nenhum registro</td></tr>`;
-  }else{
-    tbody.innerHTML = state.totals.items.map(it=>`
-      <tr>
-        <td>${it.name||"-"}</td>
-        <td>${it.phone||"-"}</td>
-        <td>${it.niche||"-"}</td>
-        <td><span class="badge ${it.mensagem_enviada?'success':'pending'}">${it.mensagem_enviada?'Enviado':'Pendente'}</span></td>
-        <td>${formatDate(it.updated_at)}</td>
-      </tr>`).join("");
+  } catch (error) {
+    console.error("[v0] Failed to load totals:", error);
   }
-  const totalPages = Math.ceil((state.totals.total||0)/state.totals.pageSize);
-  document.getElementById("totals-page-info").textContent = `Página ${state.totals.page} de ${totalPages||1} (${state.totals.total} itens)`;
-  document.getElementById("totals-prev").disabled = state.totals.page<=1;
-  document.getElementById("totals-next").disabled = state.totals.page>=totalPages;
 }
 
-// ---- Ações: marcar enviada / remover ----
-window.markAsSentFromBtn = async (btn)=>{
-  const phone = btn?.dataset?.phone, name = btn?.dataset?.name || "";
+// Render Totals
+function renderTotals() {
+  const tbody = document.getElementById("totals-table-body");
+  if (state.totals.items.length === 0) {
+    tbody.innerHTML =
+      '<tr><td colspan="5" style="text-align: center; color: var(--muted);">Nenhum registro encontrado</td></tr>';
+  } else {
+    tbody.innerHTML = state.totals.items
+      .map(
+        (item) => `
+      <tr>
+        <td>${item.name || "-"}</td>
+        <td>${item.phone || "-"}</td>
+        <td>${item.niche || "-"}</td>
+        <td>
+          <span class="badge ${item.mensagem_enviada ? "success" : "pending"}">
+            ${item.mensagem_enviada ? "Enviado" : "Pendente"}
+          </span>
+        </td>
+        <td>${formatDate(item.updated_at)}</td>
+      </tr>
+    `
+      )
+      .join("");
+  }
+
+  const totalPages = Math.ceil(state.totals.total / state.totals.pageSize);
+  document.getElementById("totals-page-info").textContent =
+    `Página ${state.totals.page} de ${totalPages || 1} (${state.totals.total} itens)`;
+  document.getElementById("totals-prev").disabled = state.totals.page === 1;
+  document.getElementById("totals-next").disabled = state.totals.page >= totalPages;
+}
+
+// ====== Ações de Fila (atualizadas para salvar "Último envio") ======
+window.markAsSentFromBtn = async (btn) => {
+  const phone = btn?.dataset?.phone;
+  const name = btn?.dataset?.name || "";
   await window.markAsSent(phone, name);
 };
-window.markAsSent = async (phone, name="")=>{
-  try{
-    await api("/api/queue",{ method:"DELETE", body:JSON.stringify({ client:state.selected, phone, markSent:true }) });
-    saveLastSent(state.selected,{ name, phone, at:new Date().toISOString() });
-    showToast("Contato marcado como enviado","success");
-    state.totals.sent="all";
-    await Promise.all([ loadQueue(), loadTotals(), loadClients(), refreshStats(state.selected) ]);
-  }catch(e){ console.error("markAsSent", e); }
+
+window.markAsSent = async (phone, name = "") => {
+  try {
+    await api("/api/queue", {
+      method: "DELETE",
+      body: JSON.stringify({ client: state.selected, phone, markSent: true }),
+    });
+
+    // Salva "Último envio" localmente (fallback até o backend devolver isso)
+    saveLastSent(state.selected, { name, phone, at: new Date().toISOString() });
+
+    showToast("Contato marcado como enviado", "success");
+    state.totals.sent = "all";
+    await Promise.all([
+      loadQueue(),
+      loadTotals(),
+      loadClients(),
+      (async () => {
+        const stats = await api(`/api/stats?client=${state.selected}`);
+        state.kpis = stats;
+        renderKPIs();
+      })(),
+    ]);
+  } catch (error) {
+    console.error("[v0] Failed to mark as sent:", error);
+  }
 };
 
-window.removeFromQueueFromBtn = (btn)=>{
-  state.pendingQueueAction = { phone:btn?.dataset?.phone, name:btn?.dataset?.name || "" };
-  window.removeFromQueue(state.pendingQueueAction.phone);
+// Modal de Remover (mantido) + integração com "Último envio" quando checkbox marcado
+window.removeFromQueueFromBtn = (btn) => {
+  const phone = btn?.dataset?.phone;
+  const name = btn?.dataset?.name || "";
+  state.pendingQueueAction = { phone, name };
+  window.removeFromQueue(phone);
 };
-window.removeFromQueue = (phone)=>{
-  const modal=document.getElementById("queue-action-modal");
+
+// Remove from Queue (abre modal)
+window.removeFromQueue = (phone) => {
+  const modal = document.getElementById("queue-action-modal");
   const checkboxGroup = document.getElementById("mark-sent-checkbox");
   const checkbox = document.getElementById("mark-as-sent");
-  document.getElementById("modal-title").textContent="Remover da Fila";
-  document.getElementById("modal-message").textContent="Deseja remover este contato da fila?";
-  checkboxGroup.style.display="block"; checkbox.checked=false;
+
+  document.getElementById("modal-title").textContent = "Remover da Fila";
+  document.getElementById("modal-message").textContent = "Deseja remover este contato da fila?";
+
+  checkboxGroup.style.display = "block";
+  checkbox.checked = false;
+
   modal.classList.add("active");
 
-  document.getElementById("modal-confirm").onclick = async ()=>{
-    try{
-      await api("/api/queue",{ method:"DELETE", body:JSON.stringify({ client:state.selected, phone, markSent:checkbox.checked }) });
-      if(checkbox.checked && state.pendingQueueAction && state.pendingQueueAction.phone===phone){
-        saveLastSent(state.selected,{ name:state.pendingQueueAction.name||"", phone, at:new Date().toISOString() });
+  const confirmBtn = document.getElementById("modal-confirm");
+  confirmBtn.onclick = async () => {
+    try {
+      await api("/api/queue", {
+        method: "DELETE",
+        body: JSON.stringify({ client: state.selected, phone, markSent: checkbox.checked }),
+      });
+
+      // Se marcou "enviada", salva "Último envio" com fallback local
+      if (checkbox.checked && state.pendingQueueAction && state.pendingQueueAction.phone === phone) {
+        saveLastSent(state.selected, {
+          name: state.pendingQueueAction.name || "",
+          phone,
+          at: new Date().toISOString(),
+        });
       }
-      state.pendingQueueAction=null;
-      showToast("Contato removido da fila","success");
+      state.pendingQueueAction = null;
+
+      showToast("Contato removido da fila", "success");
       modal.classList.remove("active");
-      if(checkbox.checked) state.totals.sent="all";
-      await Promise.all([ loadQueue(), loadTotals(), loadClients(), refreshStats(state.selected) ]);
-    }catch(e){ console.error("removeFromQueue",e); }
+      if (checkbox.checked) state.totals.sent = "all";
+      await Promise.all([
+        loadQueue(),
+        loadTotals(),
+        loadClients(),
+        (async () => {
+          const stats = await api(`/api/stats?client=${state.selected}`);
+          state.kpis = stats;
+          renderKPIs();
+        })(),
+      ]);
+    } catch (error) {
+      console.error("[v0] Failed to remove from queue:", error);
+    }
   };
 };
 
-// ---- Loop ----
-async function runLoop(slug){
-  const s = slug || state.selected; if(!s) return;
-  try{
-    const { iaAuto } = loadLocalSettings(s);
-    await api("/api/loop",{ method:"POST", body:JSON.stringify({ client:s, iaAuto }) });
-    state.settings = saveLocalSettings(s,{ lastRunAt:new Date().toISOString() });
-    try{ const serv = await loadServerSettings(s); state.settings.loopStatus = serv.loopStatus || state.settings.loopStatus; }catch{}
-    renderSettings(); renderProgressCard(); applyHudPolling();
-    showToast(`Loop iniciado para ${s}`,"success");
-    if(state.selected===s){
-      await Promise.all([ loadQueue(), loadTotals(), loadClients(), refreshStats(s) ]);
-    }else{
+// Create Client
+async function createClient(slug) {
+  try {
+    const normalizedSlug = normalizeSlug(slug);
+    await api("/api/clients", { method: "POST", body: JSON.stringify({ slug: normalizedSlug }) });
+    showToast(`Cliente ${normalizedSlug} criado com sucesso`, "success");
+    await loadClients();
+    selectClient(normalizedSlug);
+  } catch (error) {
+    console.error("[v0] Failed to create client:", error);
+  }
+}
+
+// Add Contact
+async function addContact(name, phone, niche) {
+  try {
+    const response = await api("/api/contacts", {
+      method: "POST",
+      body: JSON.stringify({ client: state.selected, name, phone, niche: niche || null }),
+    });
+
+    const statusMessages = {
+      inserted: "Contato adicionado com sucesso",
+      skipped_conflict: "Contato já existe (conflito de telefone)",
+      skipped_already_known: "Contato já conhecido no histórico",
+    };
+
+    const message = statusMessages[response.status] || "Contato processado";
+    const type = response.status === "inserted" ? "success" : "warning";
+    showToast(message, type);
+
+    if (response.status === "inserted") {
+      await loadClientData(state.selected);
       await loadClients();
     }
-  }catch(e){ console.error("runLoop",e); }
+  } catch (error) {
+    console.error("[v0] Failed to add contact:", error);
+  }
 }
 
-// ---- CRUD simples ----
-async function createClient(slug){
-  try{
-    const normalized = normalizeSlug(slug);
-    await api("/api/clients",{ method:"POST", body:JSON.stringify({ slug:normalized }) });
-    showToast(`Cliente ${normalized} criado`,"success");
-    await loadClients(); selectClient(normalized);
-  }catch(e){ console.error("createClient",e); }
-}
-async function addContact(name, phone, niche){
-  try{
-    const r = await api("/api/contacts",{ method:"POST", body:JSON.stringify({ client:state.selected, name, phone, niche:niche||null })});
-    const msg = ({ inserted:"Contato adicionado", skipped_conflict:"Telefone já existe", skipped_already_known:"Contato já conhecido" })[r.status] || "Contato processado";
-    showToast(msg, r.status==="inserted"?"success":"warning");
-    if(r.status==="inserted"){ await loadClientData(state.selected); await loadClients(); }
-  }catch(e){ console.error("addContact",e); }
-}
-async function importCSV(file){
-  try{
-    const fd = new FormData(); fd.append("file", file); fd.append("client", state.selected);
+// Import CSV
+async function importCSV(file) {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("client", state.selected);
+
     showLoading();
-    const resp = await fetch(`${API_BASE_URL}/api/import`, { method:"POST", body:fd });
-    if(!resp.ok) throw new Error(`HTTP ${resp.status}`);
-    const r = await resp.json(); hideLoading();
-    document.getElementById("import-result").style.display="block";
-    document.getElementById("import-inserted").textContent = r.inserted||0;
-    document.getElementById("import-skipped").textContent  = r.skipped ||0;
-    document.getElementById("import-errors").textContent   = r.errors  ||0;
-    showToast("Importação concluída","success");
-    await loadClientData(state.selected); await loadClients();
-  }catch(e){ hideLoading(); showToast("Erro na importação","error"); console.error("importCSV",e); }
-}
-function downloadCSVTemplate(){
-  const csv = "name,phone,niche\nJoão Silva,11999999999,Tecnologia\nMaria Santos,11988888888,Saúde";
-  const blob = new Blob([csv],{type:"text/csv"}); const url = URL.createObjectURL(blob);
-  const a=document.createElement("a"); a.href=url; a.download="modelo_contatos.csv"; a.click(); URL.revokeObjectURL(url);
+    const response = await fetch(`${API_BASE_URL}/api/import`, { method: "POST", body: formData });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+    const result = await response.json();
+    hideLoading();
+
+    document.getElementById("import-result").style.display = "block";
+    document.getElementById("import-inserted").textContent = result.inserted || 0;
+    document.getElementById("import-skipped").textContent = result.skipped || 0;
+    document.getElementById("import-errors").textContent = result.errors || 0;
+
+    showToast("Importação concluída", "success");
+    await loadClientData(state.selected);
+    await loadClients();
+  } catch (error) {
+    hideLoading();
+    console.error("[v0] Failed to import CSV:", error);
+    showToast(`Erro na importação: ${error.message}`, "error");
+  }
 }
 
-// =======================================================
-// Boot
-// =======================================================
-document.addEventListener("DOMContentLoaded", ()=>{
+// Download CSV Template
+function downloadCSVTemplate() {
+  const csv = "name,phone,niche\nJoão Silva,11999999999,Tecnologia\nMaria Santos,11988888888,Saúde";
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "modelo_contatos.csv";
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// Event Listeners
+document.addEventListener("DOMContentLoaded", () => {
   injectLoopHudOnce();
   injectConfigTabOnce();
-  injectProgressCardOnce();
 
-  document.getElementById("refresh-btn")?.addEventListener("click", async()=>{
+  const lucide = window.lucide;
+  lucide && lucide.createIcons && lucide.createIcons();
+
+  document.getElementById("refresh-btn").addEventListener("click", async () => {
     await loadClients();
-    if(state.selected){ await loadClientData(state.selected); await syncSettingsFromServer(state.selected); renderLoopHud(); applyHudPolling(); }
+    if (state.selected) {
+      await loadClientData(state.selected);
+      await syncSettingsFromServer(state.selected);
+      renderLoopHud();
+      applyHudPolling();
+    }
   });
 
-  document.getElementById("client-search")?.addEventListener("input", renderClientList);
-  document.getElementById("new-client-form")?.addEventListener("submit",(e)=>{
+  document.getElementById("client-search").addEventListener("input", renderClientList);
+
+  document.getElementById("new-client-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const slug = document.getElementById("new-client-slug").value;
-    createClient(slug); e.target.reset();
-  });
-
-  // Queue pagination/search
-  document.getElementById("queue-search")?.addEventListener("input",(e)=>{
-    state.queue.search = e.target.value; state.queue.page=1; loadQueue();
-  });
-  document.getElementById("queue-prev")?.addEventListener("click",()=>{ if(state.queue.page>1){ state.queue.page--; loadQueue(); } });
-  document.getElementById("queue-next")?.addEventListener("click",()=>{
-    const totalPages = Math.ceil((state.queue.total||0)/state.queue.pageSize);
-    if(state.queue.page<totalPages){ state.queue.page++; loadQueue(); }
-  });
-
-  // Totals filters/pagination
-  document.getElementById("totals-search")?.addEventListener("input",(e)=>{
-    state.totals.search=e.target.value; state.totals.page=1; loadTotals();
-  });
-  document.getElementById("totals-filter")?.addEventListener("change",(e)=>{
-    state.totals.sent=e.target.value; state.totals.page=1; loadTotals();
-  });
-  document.getElementById("totals-prev")?.addEventListener("click",()=>{ if(state.totals.page>1){ state.totals.page--; loadTotals(); } });
-  document.getElementById("totals-next")?.addEventListener("click",()=>{
-    const totalPages = Math.ceil((state.totals.total||0)/state.totals.pageSize);
-    if(state.totals.page<totalPages){ state.totals.page++; loadTotals(); }
-  });
-
-  // Add contact
-  document.getElementById("add-contact-form")?.addEventListener("submit",(e)=>{
-    e.preventDefault();
-    addContact(
-      document.getElementById("contact-name").value,
-      document.getElementById("contact-phone").value,
-      document.getElementById("contact-niche").value
-    );
+    createClient(slug);
     e.target.reset();
   });
 
-  // Import CSV
-  document.getElementById("csv-file")?.addEventListener("change",(e)=>{
-    document.getElementById("file-name").textContent = e.target.files[0]?.name || "Selecione um arquivo CSV";
+  document.querySelectorAll(".tab").forEach((tab) => {
+    tab.addEventListener("click", () => {
+      const tabName = tab.dataset.tab;
+      document.querySelectorAll(".tab").forEach((t) => t.classList.remove("active"));
+      tab.addEventListener("click", () => {});
+      tab.classList.add("active");
+      document.querySelectorAll(".tab-content").forEach((content) => content.classList.remove("active"));
+      document.getElementById(`tab-${tabName}`).classList.add("active");
+    });
   });
-  document.getElementById("import-csv-form")?.addEventListener("submit",(e)=>{
+
+  document.getElementById("queue-search").addEventListener("input", (e) => {
+    state.queue.search = e.target.value;
+    state.queue.page = 1;
+    loadQueue();
+  });
+
+  document.getElementById("queue-prev").addEventListener("click", () => {
+    if (state.queue.page > 1) {
+      state.queue.page--;
+      loadQueue();
+    }
+  });
+  document.getElementById("queue-next").addEventListener("click", () => {
+    const totalPages = Math.ceil(state.queue.total / state.queue.pageSize);
+    if (state.queue.page < totalPages) {
+      state.queue.page++;
+      loadQueue();
+    }
+  });
+
+  document.getElementById("totals-search").addEventListener("input", (e) => {
+    state.totals.search = e.target.value;
+    state.totals.page = 1;
+    loadTotals();
+  });
+
+  document.getElementById("totals-filter").addEventListener("change", (e) => {
+    state.totals.sent = e.target.value;
+    state.totals.page = 1;
+    loadTotals();
+  });
+
+  document.getElementById("totals-prev").addEventListener("click", () => {
+    if (state.totals.page > 1) {
+      state.totals.page--;
+      loadTotals();
+    }
+  });
+  document.getElementById("totals-next").addEventListener("click", () => {
+    const totalPages = Math.ceil(state.totals.total / state.totals.pageSize);
+    if (state.totals.page < totalPages) {
+      state.totals.page++;
+      loadTotals();
+    }
+  });
+
+  document.getElementById("add-contact-form").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const name = document.getElementById("contact-name").value;
+    const phone = document.getElementById("contact-phone").value;
+    const niche = document.getElementById("contact-niche").value;
+    addContact(name, phone, niche);
+    e.target.reset();
+  });
+
+  document.getElementById("csv-file").addEventListener("change", (e) => {
+    const fileName = e.target.files[0]?.name || "Selecione um arquivo CSV";
+    document.getElementById("file-name").textContent = fileName;
+  });
+
+  document.getElementById("import-csv-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const file = document.getElementById("csv-file").files[0];
-    if(file) importCSV(file);
+    if (file) importCSV(file);
   });
-  document.getElementById("download-template")?.addEventListener("click", downloadCSVTemplate);
 
-  // Modal close
-  document.getElementById("modal-close")?.addEventListener("click",()=> document.getElementById("queue-action-modal").classList.remove("active"));
-  document.getElementById("modal-cancel")?.addEventListener("click",()=> document.getElementById("queue-action-modal").classList.remove("active"));
-  document.getElementById("queue-action-modal")?.addEventListener("click",(e)=>{ if(e.target.id==="queue-action-modal") e.target.classList.remove("active"); });
+  document.getElementById("download-template").addEventListener("click", downloadCSVTemplate);
 
-  // Inicializa
+  document.getElementById("modal-close").addEventListener("click", () => {
+    document.getElementById("queue-action-modal").classList.remove("active");
+  });
+  document.getElementById("modal-cancel").addEventListener("click", () => {
+    document.getElementById("queue-action-modal").classList.remove("active");
+  });
+  document.getElementById("queue-action-modal").addEventListener("click", (e) => {
+    if (e.target.id === "queue-action-modal") e.target.classList.remove("active");
+  });
+
   loadClients();
   setInterval(loadClients, 10000);
-  window.addEventListener("beforeunload", ()=>{ Object.keys(autoTimers).forEach(stopAutoFor); stopHudPolling(); });
+
+  window.addEventListener("beforeunload", () => {
+    Object.keys(autoTimers).forEach((slug) => stopAutoFor(slug));
+    stopHudPolling();
+  });
 });
