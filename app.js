@@ -123,8 +123,8 @@ const state = {
 };
 
 // ====== Progresso em Tempo Real ======
-// Fonte SSE de progresso corrente e dados acumulados. Estes
-// variáveis globais são usados para controlar a conexão aberta
+// Fonte SSE de progresso corrente e dados acumulados. Estas
+// variáveis globais são usadas para controlar a conexão aberta
 // com o backend e para armazenar os eventos recebidos, de modo a
 // atualizar a UI (barra de progresso e tabela) conforme os envios
 // são processados.
@@ -332,7 +332,7 @@ async function syncSettingsFromServer(slug) {
     state.settings = { ...next, loopStatus: s.loopStatus || "idle" };
     renderSettings();
     applyAutoState(slug);
-    applyHudPolling(); // iniciar/parar polling do HUD conforme status
+    applyHudPolling();
   } catch (e) {
     state.settings = loadLocalSettings(slug);
     renderSettings();
@@ -395,34 +395,17 @@ function formatDate(dateString) {
     minute: "2-digit",
   });
 }
-function formatShortTime(dateString) {
-  if (!dateString) return "-";
-  const date = new Date(dateString);
-  return date.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-}
 function escapeAttr(s) {
   return String(s ?? "").replace(/"/g, "&quot;");
 }
 
 // ====== NOVOS: HUD do Loop (integrado ao cartão "Enviados") ======
-/**
- * Insere dinamicamente uma barra de progresso dentro do cartão de KPI
- * “Enviados”. A HUD flutuante anterior foi descontinuada em favor
- * desta implementação integrada. Esta função procura o elemento
- * #kpi-enviados e injeta um bloco .kpi-progress contendo a barra
- * de progresso, o texto X/Y e a hora do último envio. Caso a
- * barra já exista, não fará nada.
- */
 function injectLoopHudOnce() {
-  // localiza o valor de KPI “Enviados”
   const kpiValue = document.getElementById("kpi-enviados");
   if (!kpiValue) return;
-  // encontra o cartão pai
   const card = kpiValue.closest(".kpi-card");
   if (!card) return;
-  // se já houver uma barra de progresso, evita duplicar
   if (card.querySelector(".kpi-progress")) return;
-  // cria a estrutura de progresso
   const progress = document.createElement("div");
   progress.className = "kpi-progress";
   progress.innerHTML = `
@@ -435,10 +418,6 @@ function injectLoopHudOnce() {
   card.appendChild(progress);
 }
 
-/**
- * Atualiza a barra de progresso embutida com os valores atuais de
- * totais e enviados. Também atualiza o texto do último envio.
- */
 function renderLoopHud() {
   injectLoopHudOnce();
   const fillEl = document.getElementById("kpi-progress-fill");
@@ -450,11 +429,9 @@ function renderLoopHud() {
   const enviados = Number(state.kpis.enviados || 0);
   const progress = totais > 0 ? Math.round((enviados / totais) * 100) : 0;
 
-  // ajusta a largura da barra e o texto X/Y
   fillEl.style.width = `${progress}%`;
   textEl.textContent = `${enviados}/${totais}`;
 
-  // formata a data do último envio
   const k = state.kpis || {};
   const lastAt = k.last_sent_at || state.lastSent?.at || null;
   if (lastAt) {
@@ -471,13 +448,11 @@ function startHudPolling() {
       if (!state.selected) return;
       const stats = await apiSilent(`/api/stats?client=${state.selected}`);
       if (stats) {
-        // Se o backend já enviar last_sent_*, usamos
         state.kpis = { ...state.kpis, ...stats };
-        renderKPIs(); // mantém KPIs sincronizados
+        renderKPIs();
       }
       renderLoopHud();
     } catch (e) {
-      console.debug("HUD polling erro:", e?.message || e);
     }
   }, HUD_POLL_MS);
 }
@@ -532,7 +507,7 @@ function injectConfigTabOnce() {
 
       <div class="form-group" style="margin-top:1rem;">
         <label for="instance-url">Instância (URL de envio da IA)</label>
-        <input type="url" id="instance-url" placeholder="https://minha-instancia.exemplo/send/text">
+        <input type="url" id="instance-url" placeholder="https://minha-instância.exemplo/send/text">
       </div>
 
       <div class="form-group" style="margin-top:.5rem;">
@@ -613,7 +588,7 @@ function injectConfigTabOnce() {
 
       const typed = window.prompt(`Para confirmar, digite o slug do cliente exatamente como abaixo:\n\n${slug}`);
       if (typed !== slug) {
-        showToast("Confirmação cancelada.", "warning");
+      showToast("Confirmação cancelada.", "warning");
         return;
       }
 
@@ -622,7 +597,6 @@ function injectConfigTabOnce() {
         body: JSON.stringify({ client: slug }),
       });
 
-      // Limpa estado local e timers
       stopAutoFor(slug);
       localStorage.removeItem(settingsKey(slug));
       localStorage.removeItem(lastSentKey(slug));
@@ -631,7 +605,6 @@ function injectConfigTabOnce() {
 
       showToast(`Tabelas de ${slug} apagadas com sucesso`, "success");
 
-      // Recarrega clientes e seleciona outro (ou mostra vazio)
       await loadClients();
       if (state.clients.length > 0) {
         selectClient(state.clients[0].slug);
@@ -647,7 +620,6 @@ function injectConfigTabOnce() {
       } else {
         showToast("Falha ao apagar as tabelas do cliente", "error");
       }
-      console.error("delete-client error:", e);
     }
   });
 
@@ -683,6 +655,7 @@ function renderSettings() {
   const st = cfg.loopStatus || "idle";
   statusEl.textContent = `Status: ${st} | Última execução: ${last}`;
 }
+
 // ==========================================
 
 // Inicia o loop de processamento para um cliente
@@ -797,8 +770,7 @@ function renderClientList() {
 
 // Select Client
 async function selectClient(slug) {
-  // Ao selecionar um novo cliente, encerra qualquer conexão SSE ativa
-  disconnectProgressStream();
+  try { disconnectProgressStream(); } catch {}
   state.selected = slug;
 
   state.queue.page = 1;
@@ -853,7 +825,7 @@ function renderKPIs() {
   if (pendEl) pendEl.textContent = state.kpis.pendentes || 0;
   if (filaEl) filaEl.textContent = state.kpis.fila || 0;
 
-  renderLoopHud(); // mantém HUD coerente com KPIs
+  renderLoopHud();
 }
 
 // Load Queue
@@ -995,7 +967,7 @@ window.markAsSent = async (phone, name = "") => {
   }
 };
 
-// Modal de Remover (mantido) + integração com "Último envio" quando checkbox marcado
+// Modal de Remover + integração com "Último envio" quando checkbox marcado
 window.removeFromQueueFromBtn = (btn) => {
   const phone = btn?.dataset?.phone;
   const name = btn?.dataset?.name || "";
