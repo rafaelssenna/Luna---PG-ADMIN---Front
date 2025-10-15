@@ -6,7 +6,7 @@
   <title>Luna - Gerenciador de Filas</title>
   <link rel="stylesheet" href="styles.css">
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
-  <!--
+  
     Definimos aqui a URL base do backend (API) utilizada pelo front-end.
     Quando o frontend está hospedado em um domínio diferente do backend (por exemplo,
     o frontend no Vercel e o backend na Railway), as chamadas HTTP feitas com
@@ -20,14 +20,14 @@
     na Railway ou outra plataforma de hospedagem, incluindo o protocolo (http ou
     https). Exemplo:
       window.API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app";
-  -->
+  
   <script>
     // URL base da API (backend). Substitua pela sua URL ou deixe vazio se for a mesma origem.
     window.API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app";
   </script>
 </head>
 <body>
-  <!-- Header -->
+   Header 
   <header class="header">
     <div class="header-content">
       <h1 class="logo">Luna</h1>
@@ -39,9 +39,9 @@
     </div>
   </header>
 
-  <!-- Main Layout -->
+   Main Layout 
   <div class="layout">
-    <!-- Sidebar -->
+     Sidebar 
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <h2>Clientes</h2>
@@ -50,18 +50,18 @@
         </button>
       </div>
 
-      <!-- Search Clients -->
+       Search Clients 
       <div class="search-box">
         <i data-lucide="search"></i>
         <input type="text" id="client-search" placeholder="Buscar clientes..." aria-label="Buscar clientes">
       </div>
 
-      <!-- Client List -->
+       Client List 
       <div class="client-list" id="client-list" role="list">
-        <!-- Populated by JS -->
+         Populated by JS 
       </div>
 
-      <!-- New Client Form -->
+       New Client Form 
       <div class="new-client-form">
         <h3>Novo Cliente</h3>
         <form id="new-client-form">
@@ -74,7 +74,7 @@
       </div>
     </aside>
 
-    <!-- Main Content -->
+     Main Content 
     <main class="main-content" id="main-content">
       <div class="empty-state" id="empty-state">
         <i data-lucide="users"></i>
@@ -82,12 +82,12 @@
       </div>
 
       <div class="client-view" id="client-view" style="display: none;">
-        <!-- Client Header -->
+         Client Header 
         <div class="client-header">
           <h2 id="client-title">Cliente</h2>
         </div>
 
-        <!-- KPI Cards -->
+         KPI Cards 
         <div class="kpi-grid">
           <div class="kpi-card">
             <div class="kpi-icon" style="background: var(--accent);">
@@ -120,7 +120,33 @@
           </div>
         </div>
 
-        <!-- Tabs -->
+         HUD de Progresso melhorado com informações de envios 
+        <div id="loop-hud-wrapper">
+          <div class="loop-hud">
+            <div class="hud-indicator"></div>
+            <div class="hud-header">
+              <span class="hud-title">Progresso</span>
+              <span class="hud-percent">0%</span>
+            </div>
+            <div class="hud-bar">
+              <div class="hud-bar-fill"></div>
+            </div>
+            <div class="hud-section">
+              <span class="hud-label">Envios</span>
+              <span class="hud-value" id="hud-envios">0</span>
+            </div>
+            <div class="hud-section">
+              <span class="hud-label">Último envio:</span>
+              <span class="hud-value" id="hud-ultimo-envio">—</span>
+            </div>
+            <div class="hud-section">
+              <span class="hud-label">Horário:</span>
+              <span class="hud-value" id="hud-horario">—</span>
+            </div>
+          </div>
+        </div>
+
+         Tabs 
         <div class="tabs">
           <button class="tab active" data-tab="queue">
             <i data-lucide="list"></i>
@@ -138,9 +164,13 @@
             <i data-lucide="upload"></i>
             Importar CSV
           </button>
+          <button class="tab" data-tab="config">
+            <i data-lucide="settings"></i>
+            Config
+          </button>
         </div>
 
-        <!-- Tab Content: Queue -->
+         Tab Content: Queue 
         <div class="tab-content active" id="tab-queue">
           <div class="table-controls">
             <div class="search-box">
@@ -159,7 +189,7 @@
                 </tr>
               </thead>
               <tbody id="queue-table-body">
-                <!-- Populated by JS -->
+                 Populated by JS 
               </tbody>
             </table>
           </div>
@@ -175,7 +205,7 @@
           </div>
         </div>
 
-        <!-- Tab Content: Totals -->
+         Tab Content: Totals 
         <div class="tab-content" id="tab-totals">
           <div class="table-controls">
             <div class="search-box">
@@ -201,7 +231,7 @@
                 </tr>
               </thead>
               <tbody id="totals-table-body">
-                <!-- Populated by JS -->
+                 Populated by JS 
               </tbody>
             </table>
           </div>
@@ -217,7 +247,7 @@
           </div>
         </div>
 
-        <!-- Tab Content: Add Contact -->
+         Tab Content: Add Contact 
         <div class="tab-content" id="tab-add-contact">
           <div class="form-card">
             <h3>Adicionar Novo Contato</h3>
@@ -242,7 +272,7 @@
           </div>
         </div>
 
-        <!-- Tab Content: Import CSV -->
+         Tab Content: Import CSV 
         <div class="tab-content" id="tab-import-csv">
           <div class="form-card">
             <h3>Importar Contatos via CSV</h3>
@@ -289,11 +319,52 @@
             </div>
           </div>
         </div>
+
+         Tab Content: Config 
+        <div class="tab-content" id="tab-config">
+          <div class="form-card">
+            <h3>Configurações do Cliente</h3>
+            <form id="config-form">
+              <div class="form-group checkbox-group">
+                <label>
+                  <input type="checkbox" id="config-auto-loop">
+                  <span>Execução automática do loop</span>
+                </label>
+              </div>
+              <div class="form-group checkbox-group">
+                <label>
+                  <input type="checkbox" id="config-auto-ia">
+                  <span>IA automática</span>
+                </label>
+              </div>
+              <div class="form-group">
+                <label for="config-instance-url">Instância (URL de envio da IA)</label>
+                <input type="url" id="config-instance-url" placeholder="https://ia-clientes.uazapi.com/send/text">
+              </div>
+              <div class="form-group">
+                <label for="config-instance-token">Token da Instância</label>
+                <input type="text" id="config-instance-token" placeholder="5aaa3fa5-5d42-4703-b6ee-b0243dfc8d94">
+              </div>
+              <div class="form-group">
+                <label for="config-token-header">Cabeçalho do Token</label>
+                <input type="text" id="config-token-header" placeholder="token" value="token">
+              </div>
+              <div class="form-group">
+                <label for="config-schema">Esquema (opcional)</label>
+                <input type="text" id="config-schema" placeholder="Bearer (ou deixe vazio)">
+              </div>
+              <button type="submit" class="btn btn-primary">
+                <i data-lucide="save"></i>
+                Salvar Configurações
+              </button>
+            </form>
+          </div>
+        </div>
       </div>
     </main>
   </div>
 
-  <!-- Modal for Queue Actions -->
+   Modal for Queue Actions 
   <div class="modal" id="queue-action-modal" role="dialog" aria-modal="true">
     <div class="modal-content">
       <div class="modal-header">
@@ -318,10 +389,10 @@
     </div>
   </div>
 
-  <!-- Toast Container -->
+   Toast Container 
   <div class="toast-container" id="toast-container" aria-live="polite"></div>
 
-  <!-- Loading Overlay -->
+   Loading Overlay 
   <div class="loading-overlay" id="loading-overlay" style="display: none;">
     <div class="spinner"></div>
   </div>
