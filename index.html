@@ -1,358 +1,238 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="pt-BR">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Luna - Gerenciador de Filas</title>
-  <!-- Atualizado para carregar o arquivo de estilos correto -->
-  <link rel="stylesheet" href="styles.css">
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
-  <!--
-    Definimos aqui a URL base do backend (API) utilizada pelo front-end.
-    Quando o frontend está hospedado em um domínio diferente do backend (por exemplo,
-    o frontend no Vercel e o backend na Railway), as chamadas HTTP feitas com
-    caminhos relativos ("/api/...") resultam em erros 404. Para corrigir isso,
-    você pode definir window.API_BASE_URL com a URL completa do seu backend.
-
-    Se o frontend e o backend estiverem no mesmo domínio, mantenha a variável
-    abaixo vazia (""), e o navegador fará as chamadas relativas corretamente.
-
-    IMPORTANTE: substitua o valor entre aspas pelo endereço real do seu servidor
-    na Railway ou outra plataforma de hospedagem, incluindo o protocolo (http ou
-    https). Exemplo:
-      window.API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app";
-  -->
-  <script>
-    // URL base da API (backend). Substitua pela sua URL ou deixe vazio se for a mesma origem.
-    window.API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app";
-  </script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Luna</title>
+  <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <!-- Header -->
-  <header class="header">
-    <div class="header-content">
-      <h1 class="logo">Luna</h1>
-      <div class="header-actions">
-        <button id="refresh-btn" class="btn-icon" aria-label="Atualizar clientes">
-          <i data-lucide="refresh-cw"></i>
-        </button>
-      </div>
-    </div>
+  <header class="topbar">
+    <div class="brand">Luna</div>
+    <button id="btnRefreshAll" class="icon-btn" title="Atualizar">
+      ⟳
+    </button>
   </header>
 
-  <!-- Main Layout -->
-  <div class="layout">
+  <div class="container">
     <!-- Sidebar -->
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar-header">
-        <h2>Clientes</h2>
-        <button id="toggle-sidebar" class="btn-icon" aria-label="Toggle sidebar">
-          <i data-lucide="menu"></i>
-        </button>
-      </div>
+    <aside class="sidebar">
+      <div class="sidebar-title">Clientes</div>
 
-      <!-- Search Clients -->
       <div class="search-box">
-        <i data-lucide="search"></i>
-        <input type="text" id="client-search" placeholder="Buscar clientes..." aria-label="Buscar clientes">
+        <input id="clientSearch" type="text" placeholder="Buscar clientes..." />
       </div>
 
-      <!-- Client List -->
-      <div class="client-list" id="client-list" role="list">
-        <!-- Populated by JS -->
-      </div>
+      <ul id="clientList" class="client-list">
+        <!-- itens renderizados via JS -->
+      </ul>
 
-      <!-- New Client Form -->
-      <div class="new-client-form">
-        <h3>Novo Cliente</h3>
-        <form id="new-client-form">
-          <input type="text" id="new-client-slug" placeholder="Ex: joana" required aria-label="Slug do cliente">
-          <button type="submit" class="btn btn-primary">
-            <i data-lucide="plus"></i>
-            Criar Cliente
-          </button>
-        </form>
+      <div class="new-client">
+        <div class="label">Novo Cliente</div>
+        <input id="newClientInput" type="text" placeholder="Ex: joana" />
+        <button id="btnCreateClient" class="primary">+ Criar Cliente</button>
       </div>
     </aside>
 
-    <!-- Main Content -->
-    <main class="main-content" id="main-content">
-      <div class="empty-state" id="empty-state">
-        <i data-lucide="users"></i>
-        <p>Selecione um cliente para começar</p>
+    <!-- Main content -->
+    <main class="main">
+      <div class="page-head">
+        <h1 id="clientTitle">—</h1>
       </div>
 
-      <div class="client-view" id="client-view" style="display: none;">
-        <!-- Client Header -->
-        <div class="client-header">
-          <h2 id="client-title">Cliente</h2>
+      <!-- KPIs -->
+      <section class="kpis">
+        <div class="kpi">
+          <div class="kpi-icon">🥞</div>
+          <div class="kpi-body">
+            <div class="kpi-label">Totais</div>
+            <div id="kpiTotais" class="kpi-value">0</div>
+          </div>
         </div>
+        <div class="kpi">
+          <div class="kpi-icon">✅</div>
+          <div class="kpi-body">
+            <div class="kpi-label">Enviados</div>
+            <div id="kpiEnviados" class="kpi-value">0</div>
+            <div id="kpiLastSent" class="kpi-sub muted">—</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-icon">📋</div>
+          <div class="kpi-body">
+            <div class="kpi-label">Na Fila</div>
+            <div id="kpiFila" class="kpi-value">0</div>
+          </div>
+        </div>
+      </section>
 
-        <!-- KPI Cards -->
+      <!-- Tabs -->
+      <nav class="tabs">
+        <button id="tabButtonQueue"   class="tab-btn active" data-tab="queue">Fila</button>
+        <button id="tabButtonTotals"  class="tab-btn" data-tab="totals">Totais</button>
+        <button id="tabButtonAdd"     class="tab-btn" data-tab="add">Adicionar Contato</button>
+        <button id="tabButtonImport"  class="tab-btn" data-tab="import">Importar CSV</button>
+        <button id="tabButtonConfig"  class="tab-btn" data-tab="config">Config</button>
+        <button id="tabButtonProgress"class="tab-btn" data-tab="progress">Progresso</button>
+      </nav>
+
+      <!-- TAB: FILA -->
+      <section id="tab-queue" class="tab">
+        <div class="toolbar">
+          <input id="queueSearch" type="text" placeholder="Buscar na fila..." />
+        </div>
+        <div class="table">
+          <div class="thead">
+            <div>Nome</div><div>Telefone</div><div>Ações</div>
+          </div>
+          <div id="queueBody" class="tbody">
+            <!-- linhas -->
+          </div>
+          <div class="tfoot">
+            <div class="pager">
+              <button id="queuePrev">◀</button>
+              <span id="queuePageInfo">Página 1</span>
+              <button id="queueNext">▶</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: TOTAIS -->
+      <section id="tab-totals" class="tab tab-hidden">
+        <div class="toolbar">
+          <input id="totalsSearch" type="text" placeholder="Buscar no histórico..." />
+          <select id="totalsFilter">
+            <option value="all">Todos</option>
+            <option value="sim">Enviados</option>
+            <option value="nao">Pendentes</option>
+          </select>
+        </div>
+        <div class="table">
+          <div class="thead">
+            <div>Nome</div><div>Telefone</div><div>Nicho</div><div>Status</div><div>Atualizado</div>
+          </div>
+          <div id="totalsBody" class="tbody"></div>
+          <div class="tfoot">
+            <div class="pager">
+              <button id="totalsPrev">◀</button>
+              <span id="totalsPageInfo">Página 1</span>
+              <button id="totalsNext">▶</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: ADICIONAR CONTATO -->
+      <section id="tab-add" class="tab tab-hidden">
+        <div class="form">
+          <div class="form-row">
+            <label>Nome</label>
+            <input id="addName" type="text" placeholder="Nome do contato" />
+          </div>
+          <div class="form-row">
+            <label>Telefone</label>
+            <input id="addPhone" type="text" placeholder="(00) 00000-0000" />
+          </div>
+          <div class="form-row">
+            <label>Nicho (opcional)</label>
+            <input id="addNiche" type="text" placeholder="Ex: Tecnologia" />
+          </div>
+          <div class="form-row">
+            <button id="btnAddContact" class="primary">➕ Adicionar Contato</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: IMPORTAR CSV -->
+      <section id="tab-import" class="tab tab-hidden">
+        <form id="csvForm" class="form">
+          <div class="form-row">
+            <label>Arquivo CSV</label>
+            <input id="csvFile" name="file" type="file" accept=".csv,text/csv" />
+          </div>
+          <div class="form-row">
+            <button class="primary" type="submit">⬆️ Importar</button>
+          </div>
+          <div id="csvResult" class="muted"></div>
+        </form>
+      </section>
+
+      <!-- TAB: CONFIG -->
+      <section id="tab-config" class="tab tab-hidden">
+        <div class="form">
+          <div class="form-row">
+            <label><input type="checkbox" id="cfgAutoRun" /> Execução automática diária</label>
+          </div>
+          <div class="form-row">
+            <label><input type="checkbox" id="cfgIaAuto" /> Usar IA (enviar para gateway)</label>
+          </div>
+
+          <div class="form-row">
+            <label>Endpoint do Gateway (UAZAPI)</label>
+            <input id="cfgInstanceUrl" type="text" placeholder="https://hia-clientes.uazapi.com/send/text" />
+          </div>
+          <div class="form-row">
+            <label>Header do Token</label>
+            <input id="cfgAuthHeader" type="text" placeholder="token" />
+          </div>
+          <div class="form-row">
+            <label>Token</label>
+            <input id="cfgToken" type="text" placeholder="seu_token" />
+          </div>
+          <div class="form-row">
+            <label>Prefixo do Token (Scheme)</label>
+            <input id="cfgAuthScheme" type="text" placeholder="(em branco para UAZAPI)" />
+          </div>
+
+          <div class="form-row">
+            <button id="btnSaveConfig" class="primary">💾 Salvar</button>
+            <button id="btnRunLoop" class="secondary">▶️ Executar Loop</button>
+          </div>
+
+          <div id="cfgMeta" class="muted"></div>
+        </div>
+      </section>
+
+      <!-- TAB: PROGRESSO -->
+      <section id="tab-progress" class="tab tab-hidden">
         <div class="kpi-grid">
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background: var(--accent);">
-              <i data-lucide="database"></i>
-            </div>
-            <div class="kpi-content">
-              <div class="kpi-label">Totais</div>
-              <div class="kpi-value" id="kpi-totais">0</div>
-            </div>
-          </div>
-
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background: var(--accent);">
-              <i data-lucide="check-circle"></i>
-            </div>
-            <div class="kpi-content">
-              <div class="kpi-label">Enviados</div>
-              <div class="kpi-value" id="kpi-enviados">0</div>
-            </div>
-          </div>
-
-          <div class="kpi-card">
-            <div class="kpi-icon" style="background: var(--accent);">
-              <i data-lucide="list"></i>
-            </div>
-            <div class="kpi-content">
-              <div class="kpi-label">Na Fila</div>
-              <div class="kpi-value" id="kpi-fila">0</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Tabs -->
-        <div class="tabs">
-          <button class="tab active" data-tab="queue">
-            <i data-lucide="list"></i>
-            Fila
-          </button>
-          <button class="tab" data-tab="totals">
-            <i data-lucide="database"></i>
-            Totais
-          </button>
-          <button class="tab" data-tab="add-contact">
-            <i data-lucide="user-plus"></i>
-            Adicionar Contato
-          </button>
-          <button class="tab" data-tab="import-csv">
-            <i data-lucide="upload"></i>
-            Importar CSV
-          </button>
-        </div>
-
-        <!-- Tab Content: Queue -->
-        <div class="tab-content active" id="tab-queue">
-          <div class="table-controls">
-            <div class="search-box">
-              <i data-lucide="search"></i>
-              <input type="text" id="queue-search" placeholder="Buscar na fila...">
-            </div>
-          </div>
-
-          <div class="table-container">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Nome</th>
-                  <th>Telefone</th>
-                  <th>Ações</th>
-                </tr>
-              </thead>
-              <tbody id="queue-table-body">
-                <!-- Populated by JS -->
-              </tbody>
-            </table>
-          </div>
-
-          <div class="pagination" id="queue-pagination">
-            <button class="btn-icon" id="queue-prev" aria-label="Página anterior">
-              <i data-lucide="chevron-left"></i>
-            </button>
-            <span id="queue-page-info">Página 1</span>
-            <button class="btn-icon" id="queue-next" aria-label="Próxima página">
-              <i data-lucide="chevron-right"></i>
-            </button>
-          </div>
-        </div>
-
-        <!-- Tab Content: Totals -->
-        <div class="tab-content" id="tab-totals">
-          <div class="table-controls">
-            <div class="search-box">
-              <i data-lucide="search"></i>
-              <input type="text" id="totals-search" placeholder="Buscar no histórico...">
-            </div>
-            <select id="totals-filter" class="filter-select">
-              <option value="all">Todos</option>
-              <option value="sim">Enviados</option>
-              <option value="nao">Pendentes</option>
-            </select>
-          </div>
-
-          <div class="table-container">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>Nome</th>
-                  <th>Telefone</th>
-                  <th>Nicho</th>
-                  <th>Status</th>
-                  <th>Atualizado</th>
-                </tr>
-              </thead>
-              <tbody id="totals-table-body">
-                <!-- Populated by JS -->
-              </tbody>
-            </table>
-          </div>
-
-          <div class="pagination" id="totals-pagination">
-            <button class="btn-icon" id="totals-prev" aria-label="Página anterior">
-              <i data-lucide="chevron-left"></i>
-            </button>
-            <span id="totals-page-info">Página 1</span>
-            <button class="btn-icon" id="totals-next" aria-label="Próxima página">
-              <i data-lucide="chevron-right"></i>
-            </button>
-          </div>
-        </div>
-
-        <!-- Tab Content: Add Contact -->
-        <div class="tab-content" id="tab-add-contact">
-          <div class="form-card">
-            <h3>Adicionar Novo Contato</h3>
-            <form id="add-contact-form">
-              <div class="form-group">
-                <label for="contact-name">Nome</label>
-                <input type="text" id="contact-name" required placeholder="Nome do contato">
-              </div>
-              <div class="form-group">
-                <label for="contact-phone">Telefone</label>
-                <input type="tel" id="contact-phone" required placeholder="(00) 00000-0000">
-              </div>
-              <div class="form-group">
-                <label for="contact-niche">Nicho (opcional)</label>
-                <input type="text" id="contact-niche" placeholder="Ex: Tecnologia">
-              </div>
-              <button type="submit" class="btn btn-primary">
-                <i data-lucide="user-plus"></i>
-                Adicionar Contato
-              </button>
-            </form>
-          </div>
-        </div>
-
-        <!-- Tab Content: Import CSV -->
-        <div class="tab-content" id="tab-import-csv">
-          <div class="form-card">
-            <h3>Importar Contatos via CSV</h3>
-            <div class="import-actions">
-              <button id="download-template" class="btn btn-secondary">
-                <i data-lucide="download"></i>
-                Baixar Modelo CSV
-              </button>
-            </div>
-
-            <form id="import-csv-form">
-              <div class="form-group">
-                <label for="csv-file">Arquivo CSV</label>
-                <div class="file-input-wrapper">
-                  <input type="file" id="csv-file" accept=".csv" required>
-                  <div class="file-input-display">
-                    <i data-lucide="upload"></i>
-                    <span id="file-name">Selecione um arquivo CSV</span>
-                  </div>
-                </div>
-              </div>
-              <button type="submit" class="btn btn-primary">
-                <i data-lucide="upload"></i>
-                Importar CSV
-              </button>
-            </form>
-
-            <div id="import-result" class="import-result" style="display: none;">
-              <h4>Resultado da Importação</h4>
-              <div class="result-stats">
-                <div class="result-stat success">
-                  <i data-lucide="check-circle"></i>
-                  <span id="import-inserted">0</span> inseridos
-                </div>
-                <div class="result-stat warning">
-                  <i data-lucide="alert-circle"></i>
-                  <span id="import-skipped">0</span> ignorados
-                </div>
-                <div class="result-stat error">
-                  <i data-lucide="x-circle"></i>
-                  <span id="import-errors">0</span> erros
-                </div>
+          <div class="card">
+            <div class="card-title">Cota de Hoje</div>
+            <div class="quota-row">
+              <div class="quota-bar"><div id="quota-fill" class="quota-fill"></div></div>
+              <div class="quota-legend">
+                <span id="quota-sent">0</span>/<span id="quota-cap">30</span>
+                — <span id="quota-remaining">0</span> restantes
               </div>
             </div>
+            <div id="quota-updated" class="muted">—</div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Próximos envios (hoje)</div>
+            <ul id="planned-list" class="planned-list">
+              <li class="muted">sem agendamentos ainda…</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Último evento</div>
+            <div id="last-event" class="last-event muted">—</div>
           </div>
         </div>
 
-        <!-- Painel de Progresso de Envios -->
-        <!--
-          Este painel permanece oculto até que um loop de envio seja iniciado. Ele
-          exibe uma barra de progresso baseada na quantidade de contatos
-          processados durante a execução atual do loop, bem como uma tabela
-          listando cada envio com o nome, telefone e o status (sucesso, erro
-          ou ignorado). O conteúdo é atualizado em tempo real via SSE.
-        -->
-        <div class="progress-panel" id="progress-panel" style="display: none;">
-          <h3>Envios em Progresso</h3>
-          <div class="progress-bar-container">
-            <div class="progress-bar-fill" id="progress-bar-fill"></div>
+        <div class="card">
+          <div class="card-title">Feed em tempo real</div>
+          <div id="progress-feed" class="progress-feed">
+            <div class="muted">Aguardando eventos…</div>
           </div>
-          <table class="progress-table">
-            <thead>
-              <tr>
-                <th>Nome</th>
-                <th>Telefone</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody id="progress-table-body"></tbody>
-          </table>
         </div>
-      </div>
+      </section>
+
     </main>
   </div>
 
-  <!-- Modal for Queue Actions -->
-  <div class="modal" id="queue-action-modal" role="dialog" aria-modal="true">
-    <div class="modal-content">
-      <div class="modal-header">
-        <h3 id="modal-title">Confirmar Ação</h3>
-        <button class="btn-icon" id="modal-close" aria-label="Fechar">
-          <i data-lucide="x"></i>
-        </button>
-      </div>
-      <div class="modal-body">
-        <p id="modal-message">Tem certeza?</p>
-        <div class="checkbox-group" id="mark-sent-checkbox" style="display: none;">
-          <label>
-            <input type="checkbox" id="mark-as-sent">
-            <span>Marcar como enviada</span>
-          </label>
-        </div>
-      </div>
-      <div class="modal-footer">
-        <button class="btn btn-secondary" id="modal-cancel">Cancelar</button>
-        <button class="btn btn-danger" id="modal-confirm">Confirmar</button>
-      </div>
-    </div>
-  </div>
-
-  <!-- Toast Container -->
-  <div class="toast-container" id="toast-container" aria-live="polite"></div>
-
-  <!-- Loading Overlay -->
-  <div class="loading-overlay" id="loading-overlay" style="display: none;">
-    <div class="spinner"></div>
-  </div>
-
-  <!-- Atualizado para carregar o arquivo JavaScript correto -->
-  <script type="module" src="app.js"></script>
+  <script src="./app.js"></script>
 </body>
 </html>
