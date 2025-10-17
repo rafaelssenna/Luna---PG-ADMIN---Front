@@ -4,15 +4,18 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Luna</title>
+
+  <!-- Estilos principais do app -->
   <link rel="stylesheet" href="./styles.css" />
+
+  <!-- Add-on de progresso (compatível com a aba Progresso já existente) -->
+  <script defer src="/progress.bundle.js"></script>
 </head>
-<script defer src="/progress.bundle.js"></script> 
 <body>
+  <!-- Topbar -->
   <header class="topbar">
     <div class="brand">Luna</div>
-    <button id="btnRefreshAll" class="icon-btn" title="Atualizar">
-      ⟳
-    </button>
+    <button id="btnRefreshAll" class="icon-btn" title="Atualizar">⟳</button>
   </header>
 
   <div class="container">
@@ -69,12 +72,12 @@
 
       <!-- Tabs -->
       <nav class="tabs">
-        <button id="tabButtonQueue"   class="tab-btn active" data-tab="queue">Fila</button>
-        <button id="tabButtonTotals"  class="tab-btn" data-tab="totals">Totais</button>
-        <button id="tabButtonAdd"     class="tab-btn" data-tab="add">Adicionar Contato</button>
-        <button id="tabButtonImport"  class="tab-btn" data-tab="import">Importar CSV</button>
-        <button id="tabButtonConfig"  class="tab-btn" data-tab="config">Config</button>
-        <button id="tabButtonProgress"class="tab-btn" data-tab="progress">Progresso</button>
+        <button id="tabButtonQueue"    class="tab-btn active" data-tab="queue">Fila</button>
+        <button id="tabButtonTotals"   class="tab-btn" data-tab="totals">Totais</button>
+        <button id="tabButtonAdd"      class="tab-btn" data-tab="add">Adicionar Contato</button>
+        <button id="tabButtonImport"   class="tab-btn" data-tab="import">Importar CSV</button>
+        <button id="tabButtonConfig"   class="tab-btn" data-tab="config">Config</button>
+        <button id="tabButtonProgress" class="tab-btn" data-tab="progress">Progresso</button>
       </nav>
 
       <!-- TAB: FILA -->
@@ -230,10 +233,16 @@
           </div>
         </div>
       </section>
-
     </main>
   </div>
 
+  <!-- Containers utilitários gerenciados pelo JS -->
+  <div id="toast-container" class="toast-container"></div>
+  <div id="loading-overlay" class="loading-overlay" style="display:none">
+    <div class="spinner"></div>
+  </div>
+
+  <!-- Lógica do app -->
   <script src="./app.js"></script>
 </body>
 </html>
