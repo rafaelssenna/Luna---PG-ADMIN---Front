@@ -67,6 +67,23 @@ async function postJsonNoWait(path, body, { timeoutMs = 1500 } = {}) {
   }
 }
 
+/* ---- normalizador do endpoint da instância (evita 405 quando salvam só o domínio) ---- */
+function normalizeInstanceUrl(raw) {
+  if (!raw) return "";
+  let u = raw.trim();
+  if (!/^https?:\/\//i.test(u)) u = "https://" + u; // garante protocolo
+  try {
+    const url = new URL(u);
+    // Se vier só o domínio ("/"), força a rota padrão da UAZAPI
+    if (!url.pathname || url.pathname === "/") url.pathname = "/send/text";
+    u = url.toString();
+  } catch {
+    // se for inválida, devolve como veio (usuário verá o erro ao salvar/chamar)
+  }
+  // remove barra final para evitar // acidental
+  return u.replace(/\/$/, "");
+}
+
 // -------- estado ----------
 const state = {
   clients: [],
@@ -367,7 +384,7 @@ async function saveServerSettings() {
     client: state.selected,
     autoRun: $("#cfgAutoRun")?.checked || false,
     iaAuto: $("#cfgIaAuto")?.checked || false,
-    instanceUrl: ($("#cfgInstanceUrl")?.value || "").trim(),
+    instanceUrl: normalizeInstanceUrl(($("#cfgInstanceUrl")?.value || "")),
     instanceToken: ($("#cfgToken")?.value || "").trim(),
     instanceAuthHeader: ($("#cfgAuthHeader")?.value || "token").trim() || "token",
     instanceAuthScheme: ($("#cfgAuthScheme")?.value || "").trim()
