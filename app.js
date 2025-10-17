@@ -10,6 +10,7 @@
      GET  /api/client-settings?client=:slug
      POST /api/client-settings { client, autoRun, iaAuto, instanceUrl, instanceToken, instanceAuthHeader, instanceAuthScheme }
      POST /api/loop     { client, iaAuto? }
+     DELETE /api/delete-client { client }
 */
 
 const API_BASE_URL = (window.API_BASE_URL !== undefined ? window.API_BASE_URL : "");
@@ -20,6 +21,7 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 function showToast(msg, type = "info") {
   const box = $("#toast-container");
+  if (!box) { console[type === "error" ? "error" : "log"](msg); return; }
   const el = document.createElement("div");
   el.className = "toast";
   el.style.borderLeftColor = (type === "error" ? "var(--danger)" :
@@ -28,8 +30,8 @@ function showToast(msg, type = "info") {
   box.appendChild(el);
   setTimeout(() => el.remove(), 3500);
 }
-function showLoading() { $("#loading-overlay").style.display = "flex"; }
-function hideLoading() { $("#loading-overlay").style.display = "none"; }
+function showLoading() { const o = $("#loading-overlay"); if (o) o.style.display = "flex"; }
+function hideLoading() { const o = $("#loading-overlay"); if (o) o.style.display = "none"; }
 
 async function api(path, options = {}) {
   showLoading();
@@ -84,7 +86,8 @@ async function loadClients() {
 
 function renderClientList() {
   const ul = $("#clientList");
-  const term = $("#clientSearch").value.trim().toLowerCase();
+  if (!ul) return;
+  const term = ($("#clientSearch")?.value || "").trim().toLowerCase();
   const list = state.clients
     .filter(c => c.slug.toLowerCase().includes(term))
     .map(c => {
@@ -115,7 +118,8 @@ async function createClient(slugRaw) {
 
 async function selectClient(slug) {
   state.selected = slug;
-  $("#clientTitle").textContent = slug || "—";
+  const title = $("#clientTitle");
+  if (title) title.textContent = slug || "—";
   renderClientList();
   await Promise.all([
     loadStats(),
@@ -141,12 +145,12 @@ async function loadStats() {
   } catch {}
 }
 function renderKPIs() {
-  $("#kpiTotais").textContent = state.kpis.totais || 0;
-  $("#kpiEnviados").textContent = state.kpis.enviados || 0;
-  $("#kpiFila").textContent = state.kpis.fila || 0;
-  $("#kpiLastSent").textContent = state.kpis.last_sent_at
+  $("#kpiTotais") && ($("#kpiTotais").textContent = state.kpis.totais || 0);
+  $("#kpiEnviados") && ($("#kpiEnviados").textContent = state.kpis.enviados || 0);
+  $("#kpiFila") && ($("#kpiFila").textContent = state.kpis.fila || 0);
+  $("#kpiLastSent") && ($("#kpiLastSent").textContent = state.kpis.last_sent_at
     ? new Date(state.kpis.last_sent_at).toLocaleString("pt-BR")
-    : "—";
+    : "—");
 }
 
 // -------- queue ----------
@@ -165,6 +169,7 @@ async function loadQueue() {
 
 function renderQueue() {
   const wrap = $("#queueBody");
+  if (!wrap) return;
   if (!state.queue.items.length) {
     wrap.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/4">Nenhum contato na fila</div></div>`;
   } else {
@@ -183,13 +188,13 @@ function renderQueue() {
     }).join("");
   }
   const totalPages = Math.max(1, Math.ceil((state.queue.total || 0) / state.queue.pageSize));
-  $("#queuePageInfo").textContent = `Página ${state.queue.page} de ${totalPages} (${state.queue.total} itens)`;
-  $("#queuePrev").disabled = state.queue.page <= 1;
-  $("#queueNext").disabled = state.queue.page >= totalPages;
+  $("#queuePageInfo") && ($("#queuePageInfo").textContent = `Página ${state.queue.page} de ${totalPages} (${state.queue.total} itens)`);
+  $("#queuePrev") && ($("#queuePrev").disabled = state.queue.page <= 1);
+  $("#queueNext") && ($("#queueNext").disabled = state.queue.page >= totalPages);
 
   // delegação de eventos
   wrap.querySelectorAll("button[data-act]").forEach(btn => {
-    btn.addEventListener("click", async (e) => {
+    btn.addEventListener("click", async () => {
       const phone = btn.dataset.phone; const name = btn.dataset.name;
       const act = btn.dataset.act;
       if (act === "mark") {
@@ -241,6 +246,7 @@ async function loadTotals() {
 
 function renderTotals() {
   const wrap = $("#totalsBody");
+  if (!wrap) return;
   if (!state.totals.items.length) {
     wrap.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/6">Nenhum registro encontrado</div></div>`;
   } else {
@@ -262,17 +268,17 @@ function renderTotals() {
     }).join("");
   }
   const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize));
-  $("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`;
-  $("#totalsPrev").disabled = state.totals.page <= 1;
-  $("#totalsNext").disabled = state.totals.page >= totalPages;
+  $("#totalsPageInfo") && ($("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`);
+  $("#totalsPrev") && ($("#totalsPrev").disabled = state.totals.page <= 1);
+  $("#totalsNext") && ($("#totalsNext").disabled = state.totals.page >= totalPages);
 }
 
 // -------- contatos / CSV ----------
 async function addContact() {
   if (!state.selected) return;
-  const name  = $("#addName").value.trim();
-  const phone = $("#addPhone").value.trim();
-  const niche = $("#addNiche").value.trim();
+  const name  = ($("#addName")?.value || "").trim();
+  const phone = ($("#addPhone")?.value || "").trim();
+  const niche = ($("#addNiche")?.value || "").trim();
   if (!name || !phone) { showToast("Informe nome e telefone", "warning"); return; }
   try {
     const r = await api("/api/contacts", {
@@ -283,7 +289,9 @@ async function addContact() {
                 r.status === "skipped_conflict" ? "Telefone já existe" :
                 r.status === "skipped_already_known" ? "Já presente no histórico" : "Processado";
     showToast(msg, r.status === "inserted" ? "success" : "warning");
-    $("#addName").value = ""; $("#addPhone").value = ""; $("#addNiche").value = "";
+    if ($("#addName"))  $("#addName").value  = "";
+    if ($("#addPhone")) $("#addPhone").value = "";
+    if ($("#addNiche")) $("#addNiche").value = "";
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
   } catch {}
 }
@@ -298,8 +306,10 @@ async function importCSV(file) {
     const res = await fetch(`${API_BASE_URL}/api/import`, { method: "POST", body: fd });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const result = await res.json();
-    $("#csvResult").textContent =
-      `Inseridos: ${result.inserted || 0} | Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
+    if ($("#csvResult")) {
+      $("#csvResult").textContent =
+        `Inseridos: ${result.inserted || 0} | Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
+    }
     showToast("Importação concluída", "success");
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
   } catch (e) {
@@ -324,25 +334,25 @@ async function loadServerSettings() {
     state.settings = { autoRun:false, iaAuto:false, instanceUrl:"", instanceToken:"", instanceAuthHeader:"token", instanceAuthScheme:"" };
   }
   // popular form
-  $("#cfgAutoRun").checked = !!state.settings.autoRun;
-  $("#cfgIaAuto").checked = !!state.settings.iaAuto;
-  $("#cfgInstanceUrl").value = state.settings.instanceUrl || "";
-  $("#cfgAuthHeader").value = state.settings.instanceAuthHeader || "token";
-  $("#cfgToken").value = state.settings.instanceToken || "";
-  $("#cfgAuthScheme").value = state.settings.instanceAuthScheme || "";
-  $("#cfgMeta").textContent = "";
+  $("#cfgAutoRun") && ($("#cfgAutoRun").checked = !!state.settings.autoRun);
+  $("#cfgIaAuto") && ($("#cfgIaAuto").checked = !!state.settings.iaAuto);
+  $("#cfgInstanceUrl") && ($("#cfgInstanceUrl").value = state.settings.instanceUrl || "");
+  $("#cfgAuthHeader") && ($("#cfgAuthHeader").value = state.settings.instanceAuthHeader || "token");
+  $("#cfgToken") && ($("#cfgToken").value = state.settings.instanceToken || "");
+  $("#cfgAuthScheme") && ($("#cfgAuthScheme").value = state.settings.instanceAuthScheme || "");
+  $("#cfgMeta") && ($("#cfgMeta").textContent = "");
 }
 
 async function saveServerSettings() {
   if (!state.selected) return;
   const payload = {
     client: state.selected,
-    autoRun: $("#cfgAutoRun").checked,
-    iaAuto: $("#cfgIaAuto").checked,
-    instanceUrl: $("#cfgInstanceUrl").value.trim(),
-    instanceToken: $("#cfgToken").value.trim(),
-    instanceAuthHeader: $("#cfgAuthHeader").value.trim() || "token",
-    instanceAuthScheme: $("#cfgAuthScheme").value.trim()
+    autoRun: $("#cfgAutoRun")?.checked || false,
+    iaAuto: $("#cfgIaAuto")?.checked || false,
+    instanceUrl: ($("#cfgInstanceUrl")?.value || "").trim(),
+    instanceToken: ($("#cfgToken")?.value || "").trim(),
+    instanceAuthHeader: ($("#cfgAuthHeader")?.value || "token").trim() || "token",
+    instanceAuthScheme: ($("#cfgAuthScheme")?.value || "").trim()
   };
   try {
     await api("/api/client-settings", { method: "POST", body: JSON.stringify(payload) });
@@ -352,13 +362,59 @@ async function saveServerSettings() {
 
 async function runLoop() {
   if (!state.selected) return;
-  const iaAuto = $("#cfgIaAuto").checked;
+  const iaAuto = $("#cfgIaAuto")?.checked || false;
   try {
     await api("/api/loop", { method: "POST", body: JSON.stringify({ client: state.selected, iaAuto }) });
     showToast(`Loop iniciado para ${state.selected}`, "success");
     // atualiza KPIs e fila logo após
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
   } catch {}
+}
+
+// 🗑️ Excluir tabela do cliente (com dupla confirmação)
+async function deleteClient() {
+  const slug = state.selected;
+  if (!slug) { showToast("Nenhum cliente selecionado.", "warning"); return; }
+
+  const confirm1 = window.confirm(
+    `Tem certeza que deseja APAGAR as tabelas e dados do cliente "${slug}"?\n\n` +
+    `Esta ação NÃO pode ser desfeita.`
+  );
+  if (!confirm1) return;
+
+  const typed = window.prompt(`Para confirmar, digite o slug do cliente exatamente como abaixo:\n\n${slug}`);
+  if (typed !== slug) {
+    showToast("Confirmação cancelada.", "warning");
+    return;
+  }
+
+  try {
+    await api("/api/delete-client", {
+      method: "DELETE",
+      body: JSON.stringify({ client: slug })
+    });
+
+    showToast(`Tabelas de ${slug} apagadas com sucesso`, "success");
+
+    // Atualiza a lista. Se houver outros clientes, seleciona o primeiro.
+    await loadClients();
+    if (state.clients.length > 0) {
+      selectClient(state.clients[0].slug);
+    } else {
+      state.selected = null;
+      const title = $("#clientTitle"); if (title) title.textContent = "—";
+      // limpa seções principais
+      const qb = $("#queueBody");  if (qb)  qb.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/4">Nenhum contato na fila</div></div>`;
+      const tb = $("#totalsBody"); if (tb) tb.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/6">Nenhum registro encontrado</div></div>`;
+      $("#kpiTotais")  && ($("#kpiTotais").textContent = 0);
+      $("#kpiEnviados")&& ($("#kpiEnviados").textContent = 0);
+      $("#kpiFila")    && ($("#kpiFila").textContent = 0);
+      $("#kpiLastSent")&& ($("#kpiLastSent").textContent = "—");
+    }
+  } catch (err) {
+    console.error(err);
+    showToast("Erro ao excluir tabelas", "error");
+  }
 }
 
 // -------- eventos iniciais ----------
@@ -373,49 +429,65 @@ document.addEventListener("DOMContentLoaded", () => {
   activateTab("queue");
 
   // Sidebar / clientes
-  $("#clientSearch").addEventListener("input", renderClientList);
-  $("#btnCreateClient").addEventListener("click", () => createClient($("#newClientInput").value));
+  $("#clientSearch") && $("#clientSearch").addEventListener("input", renderClientList);
+  $("#btnCreateClient") && $("#btnCreateClient").addEventListener("click", () => createClient($("#newClientInput").value));
 
   // Fila
-  $("#queueSearch").addEventListener("input", (e) => {
+  $("#queueSearch") && $("#queueSearch").addEventListener("input", (e) => {
     state.queue.search = e.target.value; state.queue.page = 1; loadQueue();
   });
-  $("#queuePrev").addEventListener("click", () => { if (state.queue.page > 1) { state.queue.page--; loadQueue(); } });
-  $("#queueNext").addEventListener("click", () => {
+  $("#queuePrev") && $("#queuePrev").addEventListener("click", () => { if (state.queue.page > 1) { state.queue.page--; loadQueue(); } });
+  $("#queueNext") && $("#queueNext").addEventListener("click", () => {
     const totalPages = Math.max(1, Math.ceil((state.queue.total || 0) / state.queue.pageSize));
     if (state.queue.page < totalPages) { state.queue.page++; loadQueue(); }
   });
 
   // Totais
-  $("#totalsSearch").addEventListener("input", (e) => {
+  $("#totalsSearch") && $("#totalsSearch").addEventListener("input", (e) => {
     state.totals.search = e.target.value; state.totals.page = 1; loadTotals();
   });
-  $("#totalsFilter").addEventListener("change", (e) => {
+  $("#totalsFilter") && $("#totalsFilter").addEventListener("change", (e) => {
     state.totals.sent = e.target.value; state.totals.page = 1; loadTotals();
   });
-  $("#totalsPrev").addEventListener("click", () => { if (state.totals.page > 1) { state.totals.page--; loadTotals(); } });
-  $("#totalsNext").addEventListener("click", () => {
+  $("#totalsPrev") && $("#totalsPrev").addEventListener("click", () => { if (state.totals.page > 1) { state.totals.page--; loadTotals(); } });
+  $("#totalsNext") && $("#totalsNext").addEventListener("click", () => {
     const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize));
     if (state.totals.page < totalPages) { state.totals.page++; loadTotals(); }
   });
 
   // Adicionar contato
-  $("#btnAddContact").addEventListener("click", addContact);
+  $("#btnAddContact") && $("#btnAddContact").addEventListener("click", addContact);
 
   // Import CSV
-  $("#csvForm").addEventListener("submit", (e) => {
+  $("#csvForm") && $("#csvForm").addEventListener("submit", (e) => {
     e.preventDefault();
-    const file = $("#csvFile").files[0];
+    const file = $("#csvFile")?.files?.[0];
     if (!file) { showToast("Selecione um CSV", "warning"); return; }
     importCSV(file);
   });
 
   // Config
-  $("#btnSaveConfig").addEventListener("click", saveServerSettings);
-  $("#btnRunLoop").addEventListener("click", runLoop);
+  $("#btnSaveConfig") && $("#btnSaveConfig").addEventListener("click", saveServerSettings);
+  $("#btnRunLoop") && $("#btnRunLoop").addEventListener("click", runLoop);
+
+  // 👉 Injeta o botão "Apagar Tabela" ao lado dos botões de Config
+  const cfgRow = $("#btnSaveConfig")?.parentElement;
+  if (cfgRow && !$("#btnDeleteClient")) {
+    const btnDel = document.createElement("button");
+    btnDel.id = "btnDeleteClient";
+    btnDel.title = "Apagar tabelas e dados deste cliente";
+    btnDel.textContent = "🗑️ Apagar Tabela";
+    // Reaproveita estilo .secondary e dá cor de perigo
+    btnDel.className = "secondary";
+    btnDel.style.marginLeft = "8px";
+    btnDel.style.background = "var(--danger)";
+    btnDel.style.color = "#fff";
+    btnDel.addEventListener("click", deleteClient);
+    cfgRow.appendChild(btnDel);
+  }
 
   // Topbar refresh
-  $("#btnRefreshAll").addEventListener("click", async () => {
+  $("#btnRefreshAll") && $("#btnRefreshAll").addEventListener("click", async () => {
     await loadClients();
     if (state.selected) {
       await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings()]);
