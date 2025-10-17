@@ -49,6 +49,24 @@ async function api(path, options = {}) {
   } finally { hideLoading(); }
 }
 
+/* ---- helper: POST sem travar UI (não mostra overlay e cancela após timeout) ---- */
+async function postJsonNoWait(path, body, { timeoutMs = 1500 } = {}) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (_) {
+    // Se abortou por timeout, tudo certo — intenção é "disparar e seguir"
+  } finally {
+    clearTimeout(t);
+  }
+}
+
 // -------- estado ----------
 const state = {
   clients: [],
@@ -360,15 +378,23 @@ async function saveServerSettings() {
   } catch {}
 }
 
+/* ---- runLoop fire-and-forget: não bloqueia a UI e não mostra overlay ---- */
 async function runLoop() {
   if (!state.selected) return;
   const iaAuto = $("#cfgIaAuto")?.checked || false;
-  try {
-    await api("/api/loop", { method: "POST", body: JSON.stringify({ client: state.selected, iaAuto }) });
-    showToast(`Loop iniciado para ${state.selected}`, "success");
-    // atualiza KPIs e fila logo após
-    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
-  } catch {}
+
+  // Dispara a execução sem segurar o overlay:
+  postJsonNoWait("/api/loop", { client: state.selected, iaAuto });
+
+  showToast(`Loop solicitado para ${state.selected}`, "success");
+
+  // Atualizações em background (sem depender do /api/loop finalizar)
+  Promise.allSettled([
+    loadStats(),
+    loadQueue(),
+    loadTotals(),
+    loadClients(),
+  ]);
 }
 
 // 🗑️ Excluir tabela do cliente (com dupla confirmação)
