@@ -1,15 +1,7 @@
 /* app.js — Luna (corrigido para normalizar endpoint e evitar travamentos)
-   Este arquivo substitui o app.js original e corrige o problema do erro 405
-   enviando para a UAZAPI.  Ele inclui:
-     - Um normalizador de URL que adiciona "/send/text" se o usuário
-       informar apenas o domínio, garantindo que o backend receba a rota
-       correta.
-     - Um helper postJsonNoWait para fazer chamadas assíncronas sem
-       travar a UI.
-     - Funções para carregar e salvar configurações que usam o
-       normalizador.
-     - Ajuste no runLoop para disparar o loop sem bloquear a tela.
- */
+   ...
+   (arquivo completo mantido; apenas ADIÇÕES no final e no DOMContentLoaded)
+*/
 
 const API_BASE_URL = (window.API_BASE_URL !== undefined ? window.API_BASE_URL : "");
 
@@ -414,6 +406,29 @@ async function stopLoop() {
   }
 }
 
+/* >>> ADIÇÃO: Buscar & Salvar Leads */
+async function searchLeadsAndSave() {
+  if (!state.selected) { showToast("Selecione um cliente", "warning"); return; }
+  const region = ($("#leadRegion")?.value || "").trim();
+  const niche  = ($("#leadNiche")?.value || "").trim();
+  const limit  = parseInt($("#leadLimit")?.value || "100", 10);
+
+  if (!region && !niche) {
+    showToast("Informe pelo menos Região ou Nicho", "warning");
+    return;
+  }
+  try {
+    const result = await api("/api/leads", {
+      method: "POST",
+      body: JSON.stringify({ client: state.selected, region, niche, limit })
+    });
+    const msg = `Encontrados: ${result.found || 0} | Inseridos: ${result.inserted || 0} | Duplicados/Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
+    $("#leadsResult") && ($("#leadsResult").textContent = msg);
+    showToast(`Leads adicionados: ${result.inserted || 0}`, "success");
+    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
+  } catch (e) { /* api() já trata toasts */ }
+}
+
 // Remover cliente
 async function deleteClient() {
   const slug = state.selected;
@@ -490,6 +505,9 @@ async function deleteClient() {
   $("#btnRunLoop") && $("#btnRunLoop").addEventListener("click", runLoop);
   /* >>> ADIÇÃO: listener do botão Parar Loop + preventDefault */
   $("#btnStopLoop") && $("#btnStopLoop").addEventListener("click", (e) => { e.preventDefault(); stopLoop(); });
+
+  /* >>> ADIÇÃO: listener do Buscar & Salvar Leads */
+  $("#btnLeadsSearch") && $("#btnLeadsSearch").addEventListener("click", searchLeadsAndSave);
 
   const cfgRow = $("#btnSaveConfig")?.parentElement;
   if (cfgRow && !$("#btnDeleteClient")) {
