@@ -78,6 +78,8 @@
         <button id="tabButtonImport"   class="tab-btn" data-tab="import">Importar CSV</button>
         <button id="tabButtonConfig"   class="tab-btn" data-tab="config">Config</button>
         <button id="tabButtonProgress" class="tab-btn" data-tab="progress">Progresso</button>
+        <!-- >>> ADIÇÃO: nova aba -->
+        <button id="tabButtonLeads"    class="tab-btn" data-tab="leads">Leads</button>
       </nav>
 
       <!-- TAB: FILA -->
@@ -233,6 +235,28 @@
           <div id="progress-feed" class="progress-feed">
             <div class="muted">Aguardando eventos…</div>
           </div>
+        </div>
+      </section>
+
+      <!-- >>> ADIÇÃO: TAB LEADS -->
+      <section id="tab-leads" class="tab tab-hidden">
+        <div class="form">
+          <div class="form-row">
+            <label>Região</label>
+            <input id="leadRegion" type="text" placeholder="Ex: Belo Horizonte/MG, MG, ou DDD 31" />
+          </div>
+          <div class="form-row">
+            <label>Nicho</label>
+            <input id="leadNiche" type="text" placeholder="Ex: Estética, Clínicas, etc." />
+          </div>
+          <div class="form-row">
+            <label>Limite</label>
+            <input id="leadLimit" type="number" min="1" max="1000" value="100" />
+          </div>
+          <div class="form-row">
+            <button id="btnLeadsSearch" class="primary" type="button">🔎 Buscar & Salvar</button>
+          </div>
+          <div id="leadsResult" class="muted"></div>
         </div>
       </section>
     </main>
