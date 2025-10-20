@@ -396,6 +396,24 @@ async function runLoop() {
   Promise.allSettled([ loadStats(), loadQueue(), loadTotals(), loadClients() ]);
 }
 
+/* >>> ADIÇÃO: parar o loop atual via /api/stop-loop */
+async function stopLoop() {
+  if (!state.selected) return;
+  try {
+    await fetch(`${API_BASE_URL}/api/stop-loop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client: state.selected })
+    });
+    showToast("Parada do loop solicitada", "warning");
+    // Atualiza indicadores rapidamente
+    Promise.allSettled([ loadStats(), loadServerSettings() ]);
+  } catch (e) {
+    console.error(e);
+    showToast("Falha ao solicitar parada do loop", "error");
+  }
+}
+
 // Remover cliente
 async function deleteClient() {
   const slug = state.selected;
@@ -470,6 +488,8 @@ async function deleteClient() {
 
   $("#btnSaveConfig") && $("#btnSaveConfig").addEventListener("click", saveServerSettings);
   $("#btnRunLoop") && $("#btnRunLoop").addEventListener("click", runLoop);
+  /* >>> ADIÇÃO: listener do botão Parar Loop */
+  $("#btnStopLoop") && $("#btnStopLoop").addEventListener("click", stopLoop);
 
   const cfgRow = $("#btnSaveConfig")?.parentElement;
   if (cfgRow && !$("#btnDeleteClient")) {
