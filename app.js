@@ -488,8 +488,8 @@ async function deleteClient() {
 
   $("#btnSaveConfig") && $("#btnSaveConfig").addEventListener("click", saveServerSettings);
   $("#btnRunLoop") && $("#btnRunLoop").addEventListener("click", runLoop);
-  /* >>> ADIÇÃO: listener do botão Parar Loop */
-  $("#btnStopLoop") && $("#btnStopLoop").addEventListener("click", stopLoop);
+  /* >>> ADIÇÃO: listener do botão Parar Loop + preventDefault */
+  $("#btnStopLoop") && $("#btnStopLoop").addEventListener("click", (e) => { e.preventDefault(); stopLoop(); });
 
   const cfgRow = $("#btnSaveConfig")?.parentElement;
   if (cfgRow && !$("#btnDeleteClient")) {
