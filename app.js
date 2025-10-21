@@ -1,6 +1,5 @@
 /* app.js — Luna (corrigido para normalizar endpoint e evitar travamentos)
-   ...
-   (arquivo completo mantido; apenas ADIÇÕES no final e no DOMContentLoaded)
+   Arquivo completo
 */
 
 const API_BASE_URL = (window.API_BASE_URL !== undefined ? window.API_BASE_URL : "");
@@ -33,6 +32,9 @@ async function api(path, options = {}) {
       headers: { "Content-Type": "application/json", ...(options.headers || {}) }
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // algumas rotas podem devolver 204 sem body
+    const ct = (res.headers.get && res.headers.get("content-type")) || "";
+    if (!ct || res.status === 204) return {};
     return await res.json();
   } catch (e) {
     console.error(e);
@@ -84,6 +86,10 @@ const state = {
     instanceAuthHeader: "token", instanceAuthScheme: ""
   }
 };
+
+// >>> Flags para evitar buscas concorrentes de leads
+let leadsBusy = false;
+let lastLeadParams = null;
 
 // Tab navigation
 function activateTab(tab) {
@@ -406,9 +412,11 @@ async function stopLoop() {
   }
 }
 
-/* >>> ADIÇÃO: Buscar & Salvar Leads */
+/* >>> ADIÇÃO: Buscar & Salvar Leads (com trava de concorrência) */
 async function searchLeadsAndSave() {
   if (!state.selected) { showToast("Selecione um cliente", "warning"); return; }
+
+  const btn   = $("#btnLeadsSearch");
   const region = ($("#leadRegion")?.value || "").trim();
   const niche  = ($("#leadNiche")?.value || "").trim();
   const limit  = parseInt($("#leadLimit")?.value || "100", 10);
@@ -417,6 +425,23 @@ async function searchLeadsAndSave() {
     showToast("Informe pelo menos Região ou Nicho", "warning");
     return;
   }
+
+  if (leadsBusy) {
+    showToast("Uma busca já está em execução… aguarde terminar.", "warning");
+    return;
+  }
+
+  // marca como ocupado e desabilita o botão
+  leadsBusy = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.prevText = btn.textContent;
+    btn.textContent = "⏳ Buscando…";
+  }
+
+  // prévia no UI
+  $("#leadsResult") && ($("#leadsResult").textContent = `Buscando: região="${region}", nicho="${niche}", limite=${limit}`);
+
   try {
     const result = await api("/api/leads", {
       method: "POST",
@@ -426,7 +451,16 @@ async function searchLeadsAndSave() {
     $("#leadsResult") && ($("#leadsResult").textContent = msg);
     showToast(`Leads adicionados: ${result.inserted || 0}`, "success");
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
-  } catch (e) { /* api() já trata toasts */ }
+  } catch (e) {
+    // api() já trata toasts
+  } finally {
+    leadsBusy = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.prevText || "🔎 Buscar & Salvar";
+      delete btn.dataset.prevText;
+    }
+  }
 }
 
 // Remover cliente
@@ -459,7 +493,7 @@ async function deleteClient() {
 }
 
 // Eventos iniciais
- document.addEventListener("DOMContentLoaded", () => {
+document.addEventListener("DOMContentLoaded", () => {
   $$(".tab-btn").forEach(btn => {
     btn.addEventListener("click", () => {
       const tab = btn.dataset.tab;
@@ -503,10 +537,10 @@ async function deleteClient() {
 
   $("#btnSaveConfig") && $("#btnSaveConfig").addEventListener("click", saveServerSettings);
   $("#btnRunLoop") && $("#btnRunLoop").addEventListener("click", runLoop);
-  /* >>> ADIÇÃO: listener do botão Parar Loop + preventDefault */
+  /* >>> listener do botão Parar Loop + preventDefault */
   $("#btnStopLoop") && $("#btnStopLoop").addEventListener("click", (e) => { e.preventDefault(); stopLoop(); });
 
-  /* >>> ADIÇÃO: listener do Buscar & Salvar Leads */
+  /* >>> listener do Buscar & Salvar Leads */
   $("#btnLeadsSearch") && $("#btnLeadsSearch").addEventListener("click", searchLeadsAndSave);
 
   const cfgRow = $("#btnSaveConfig")?.parentElement;
