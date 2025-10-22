@@ -181,7 +181,7 @@ button.secondary:hover, .secondary:hover { background: var(--secondary-hover); }
 .toast-container { position: fixed; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; }
 .toast { background: var(--card); border: 1px solid var(--card-border); border-left: 4px solid var(--accent); padding: 10px 12px; border-radius: var(--radius); box-shadow: var(--shadow-lg); }
 .loading-overlay { position: fixed; inset: 0; background: rgba(11,19,36,.8); display: flex; align-items: center; justify-content: center; z-index: 999; }
-.spinner { width: 46px; height  : 46px; border: 4px solid var(--card-border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+.spinner { width: 46px; height: 46px; border: 4px solid var(--card-border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Responsivo */
