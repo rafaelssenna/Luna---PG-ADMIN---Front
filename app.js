@@ -91,6 +91,30 @@ const state = {
 let leadsBusy = false;
 let lastLeadParams = null;
 
+// >>> FUNÇÃO ADICIONADA: atualiza o texto do botão de loop conforme o estado no servidor
+async function refreshLoopCta() {
+  const btn = $("#btnRunLoop");
+  if (!state.selected || !btn) return;
+  try {
+    const s = await api(`/api/loop-state?client=${encodeURIComponent(state.selected)}`);
+    if (s.loop_status === 'running') {
+      btn.disabled = true;
+      btn.textContent = '▶️ Executando...';
+    } else {
+      btn.disabled = false;
+      if ((s.remaining_today || 0) > 0) {
+        btn.textContent = `▶️ Continuar Loop (${s.remaining_today} restantes)`;
+      } else {
+        btn.textContent = '▶️ Executar Loop';
+      }
+    }
+  } catch (e) {
+    // fallback de interface
+    btn.disabled = false;
+    btn.textContent = '▶️ Executar Loop';
+  }
+}
+
 // Tab navigation
 function activateTab(tab) {
   $$(".tab-btn").forEach(b => b.classList.remove("active"));
@@ -154,6 +178,8 @@ async function selectClient(slug) {
     loadTotals(),
     loadServerSettings()
   ]);
+  // Atualiza o botão de loop conforme a cota/estado do dia
+  await refreshLoopCta();
 }
 
 // KPIs
@@ -392,6 +418,8 @@ async function runLoop() {
   postJsonNoWait("/api/loop", { client: state.selected, iaAuto });
   showToast(`Loop solicitado para ${state.selected}`, "success");
   Promise.allSettled([ loadStats(), loadQueue(), loadTotals(), loadClients() ]);
+  // Atualiza CTA após disparar loop
+  await refreshLoopCta();
 }
 
 /* >>> ADIÇÃO: parar o loop atual via /api/stop-loop */
@@ -409,6 +437,9 @@ async function stopLoop() {
   } catch (e) {
     console.error(e);
     showToast("Falha ao solicitar parada do loop", "error");
+  } finally {
+    // Atualiza CTA após a tentativa de parada
+    await refreshLoopCta();
   }
 }
 
