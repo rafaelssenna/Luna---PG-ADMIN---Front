@@ -36,7 +36,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px 0 08px;
+  padding: 0 16px 0 0px;
   background: var(--card);
   border-bottom: 1px solid var(--card-border);
   box-shadow: var(--shadow);
