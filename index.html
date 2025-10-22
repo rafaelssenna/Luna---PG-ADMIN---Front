@@ -8,6 +8,47 @@
   <!-- Estilos principais do app -->
   <link rel="stylesheet" href="./styles.css" />
 
+  <!-- Ajuste do loader: canto inferior direito, discreto -->
+  <style>
+    .loading-overlay {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 9999;
+      background: rgba(0,0,0,.60);
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.25);
+      display: none;
+      align-items: center;
+      gap: 10px;
+      pointer-events: none;
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+    }
+    .loading-overlay .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    .loading-overlay .label {
+      font-size: 12px;
+      opacity: .9;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Barra de cota (fallback, caso não exista no styles.css) */
+    .quota-row { display: flex; align-items: center; gap: 10px; }
+    .quota-bar { flex: 1 1 auto; height: 10px; background: #ececec; border-radius: 999px; overflow: hidden; }
+    .quota-fill { height: 100%; width: 0%; background: var(--accent, #4f46e5); transition: width .4s ease; }
+    .planned-list { list-style: none; padding-left: 0; margin: 0; }
+    .planned-list li { padding: 4px 0; border-bottom: 1px dashed rgba(0,0,0,.1); }
+  </style>
+
   <!-- Add-on de progresso (compatível com a aba Progresso já existente) -->
   <script defer src="/progress.bundle.js"></script>
 </head>
@@ -193,6 +234,13 @@
             <input id="cfgAuthScheme" type="text" placeholder="(em branco para UAZAPI)" />
           </div>
 
+          <!-- >>> CAMPO NOVO: Limite diário por cliente -->
+          <div class="form-row">
+            <label>Limite diário por cliente</label>
+            <input id="cfgDailyLimit" type="number" min="1" max="10000" placeholder="30" />
+            <div class="muted" style="font-size:12px">Máximo de mensagens/dia para este cliente.</div>
+          </div>
+
           <div class="form-row">
             <button id="btnSaveConfig" class="primary" type="button">💾 Salvar</button>
             <button id="btnRunLoop"   class="secondary" type="button">▶️ Executar Loop</button>
@@ -266,8 +314,9 @@
 
   <!-- Containers utilitários gerenciados pelo JS -->
   <div id="toast-container" class="toast-container"></div>
-  <div id="loading-overlay" class="loading-overlay" style="display:none">
+  <div id="loading-overlay" class="loading-overlay" role="status" aria-live="polite" style="display:none">
     <div class="spinner"></div>
+    <div class="label">Carregando…</div>
   </div>
 
   <!-- API base do back (Railway) -->
