@@ -152,14 +152,23 @@ function renderClientList() {
   ul.innerHTML = "";
   list.forEach(li => ul.appendChild(li));
 }
+// Normaliza o texto digitado em um slug válido para tabela: [a-z0-9_], até 64 chars
+function slugify(s) {
+  return String(s || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // remove acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9_]+/g, '_') // tudo que não for [a-z0-9_] vira _
+    .replace(/^_+|_+$/g, '')      // remove "_" no começo/fim
+    .slice(0, 64);
+}
 
 async function createClient(slugRaw) {
   try {
-    let slug = String(slugRaw || "").trim().toLowerCase();
-    if (!slug) return;
-    if (!slug.startsWith("cliente_")) slug = `cliente_${slug}`;
-    const ok = /^cliente_[a-z0-9_]+$/.test(slug);
-    if (!ok) { showToast("Use apenas minúsculas, números e _", "warning"); return; }
+    const slug = slugify(slugRaw);
+    if (!slug) { showToast("Informe um nome válido", "warning"); return; }
+    const ok = /^[a-z0-9_]{1,64}$/.test(slug);
+    if (!ok) { showToast("Use apenas minúsculas, números e _ (até 64 chars)", "warning"); return; }
+
     await api("/api/clients", { method: "POST", body: JSON.stringify({ slug }) });
     showToast(`Cliente ${slug} criado`, "success");
     await loadClients();
