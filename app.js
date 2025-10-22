@@ -32,7 +32,6 @@ async function api(path, options = {}) {
       headers: { "Content-Type": "application/json", ...(options.headers || {}) }
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    // algumas rotas podem devolver 204 sem body
     const ct = (res.headers.get && res.headers.get("content-type")) || "";
     if (!ct || res.status === 204) return {};
     return await res.json();
@@ -94,7 +93,7 @@ let lastLeadParams = null;
 // >>> Atualização periódica da cota quando a aba Progresso está ativa
 let quotaInterval = null;
 
-// >>> FUNÇÃO ADICIONADA: atualiza o texto do botão de loop conforme o estado no servidor
+// >>> Atualiza o texto do botão de loop conforme estado do servidor
 async function refreshLoopCta() {
   const btn = $("#btnRunLoop");
   if (!state.selected || !btn) return;
@@ -111,8 +110,7 @@ async function refreshLoopCta() {
         btn.textContent = '▶️ Executar Loop';
       }
     }
-  } catch (e) {
-    // fallback de interface
+  } catch {
     btn.disabled = false;
     btn.textContent = '▶️ Executar Loop';
   }
@@ -135,11 +133,8 @@ async function loadQuota() {
     $("#quota-updated") && ($("#quota-updated").textContent =
       `Atualizado em ${new Date().toLocaleString("pt-BR")}`);
 
-    // também ajusta CTA
     await refreshLoopCta();
-  } catch (e) {
-    // Silencioso: já há toast no api()
-  }
+  } catch {}
 }
 
 // Tab navigation
@@ -149,7 +144,6 @@ function activateTab(tab) {
   $$(".tab").forEach(s => s.classList.add("tab-hidden"));
   $(`#tab-${tab}`)?.classList.remove("tab-hidden");
 
-  // Inicia/para auto-refresh da cota quando a aba Progresso está ativa
   if (tab === "progress") {
     loadQuota(); // imediato
     if (!quotaInterval) quotaInterval = setInterval(loadQuota, 30000);
@@ -192,7 +186,6 @@ async function createClient(slugRaw) {
   try {
     let slug = String(slugRaw || "").trim().toLowerCase();
     if (!slug) return;
-    // validação: 1 a 64 caracteres, apenas letras minúsculas, números ou underline
     const ok = /^[a-z0-9_]{1,64}$/.test(slug);
     if (!ok) {
       showToast("Use apenas minúsculas, números e _ (até 64 caracteres)", "warning");
@@ -216,7 +209,6 @@ async function selectClient(slug) {
     loadTotals(),
     loadServerSettings()
   ]);
-  // Atualiza o botão de loop e a cota
   await refreshLoopCta();
   await loadQuota();
 }
@@ -360,8 +352,9 @@ function renderTotals() {
   }
   const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize));
   $("#totalsPageInfo") && ($("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`);
-  $("#totalsPrev") && ($("#totalsPrev").disabled = state.totals.page <= 1));
-  $("#totalsNext") && ($("#totalsNext").disabled = state.totals.page >= totalPages));
+  // >>> CORREÇÃO: removidos parênteses extras
+  $("#totalsPrev") && ($("#totalsPrev").disabled = state.totals.page <= 1);
+  $("#totalsNext") && ($("#totalsNext").disabled = state.totals.page >= totalPages);
 }
 
 // Contatos / CSV
@@ -437,7 +430,6 @@ async function loadServerSettings() {
 
 async function saveServerSettings() {
   if (!state.selected) return;
-  // dailyLimit: deixa em branco para manter valor atual
   let dailyLimitRaw = ($("#cfgDailyLimit")?.value || "").trim();
   let dailyLimit = Number.isFinite(parseInt(dailyLimitRaw, 10)) ? Math.max(1, Math.min(10000, parseInt(dailyLimitRaw, 10))) : null;
 
@@ -465,11 +457,10 @@ async function runLoop() {
   postJsonNoWait("/api/loop", { client: state.selected, iaAuto });
   showToast(`Loop solicitado para ${state.selected}`, "success");
   Promise.allSettled([ loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota() ]);
-  // Atualiza CTA após disparar loop
   await refreshLoopCta();
 }
 
-/* >>> ADIÇÃO: parar o loop atual via /api/stop-loop */
+/* >>> Parar o loop atual via /api/stop-loop */
 async function stopLoop() {
   if (!state.selected) return;
   try {
@@ -479,18 +470,16 @@ async function stopLoop() {
       body: JSON.stringify({ client: state.selected })
     });
     showToast("Parada do loop solicitada", "warning");
-    // Atualiza indicadores rapidamente
     Promise.allSettled([ loadStats(), loadServerSettings(), loadQuota(), refreshLoopCta() ]);
   } catch (e) {
     console.error(e);
     showToast("Falha ao solicitar parada do loop", "error");
   } finally {
-    // Atualiza CTA após a tentativa de parada
     await refreshLoopCta();
   }
 }
 
-/* >>> ADIÇÃO: Buscar & Salvar Leads (com trava de concorrência) */
+/* >>> Buscar & Salvar Leads (com trava de concorrência) */
 async function searchLeadsAndSave() {
   if (!state.selected) { showToast("Selecione um cliente", "warning"); return; }
 
@@ -509,7 +498,6 @@ async function searchLeadsAndSave() {
     return;
   }
 
-  // marca como ocupado e desabilita o botão
   leadsBusy = true;
   if (btn) {
     btn.disabled = true;
@@ -517,7 +505,6 @@ async function searchLeadsAndSave() {
     btn.textContent = "⏳ Buscando…";
   }
 
-  // prévia no UI
   $("#leadsResult") && ($("#leadsResult").textContent = `Buscando: região="${region}", nicho="${niche}", limite=${limit}`);
 
   try {
@@ -620,10 +607,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("#btnSaveConfig") && $("#btnSaveConfig").addEventListener("click", saveServerSettings);
   $("#btnRunLoop") && $("#btnRunLoop").addEventListener("click", runLoop);
-  /* >>> listener do botão Parar Loop + preventDefault */
   $("#btnStopLoop") && $("#btnStopLoop").addEventListener("click", (e) => { e.preventDefault(); stopLoop(); });
 
-  /* >>> listener do Buscar & Salvar Leads */
   $("#btnLeadsSearch") && $("#btnLeadsSearch").addEventListener("click", searchLeadsAndSave);
 
   const cfgRow = $("#btnSaveConfig")?.parentElement;
