@@ -14,6 +14,12 @@
   let lastSlug = null;
   let quotaTimer = null;
 
+  // Estado para controle de exibição dos próximos envios.  
+  // plannedExpanded indica se a lista completa está visível.
+  // plannedData armazena a lista completa recebida do backend.
+  let plannedExpanded = false;
+  let plannedData = [];
+
   // ---- util DOM ----
   const $  = (s, r=document) => r.querySelector(s);
   const $$ = (s, r=document) => Array.from(r.querySelectorAll(s));
@@ -47,22 +53,114 @@
   function setPlanned(list=[]) {
     const ul = $("#planned-list");
     if (!ul) return;
-    if (!list.length) {
+    // Armazena a lista para alternar entre compacto e completo
+    plannedData = Array.isArray(list) ? list : [];
+    if (!plannedData.length) {
       ul.innerHTML = `<li class="muted">sem agendamentos ainda…</li>`;
       return;
     }
-    ul.innerHTML = "";
-    list.slice(0, 15).forEach((iso, i) => {
-      const li = document.createElement("li");
-      li.innerHTML = `${fmtT(iso)} <span class="muted">#${i+1}</span>`;
-      ul.appendChild(li);
-    });
-    if (list.length > 15) {
-      const li = document.createElement("li");
-      li.className = "muted";
-      li.textContent = `+ ${list.length - 15} horários…`;
-      ul.appendChild(li);
+    // Quando existir dados, renderiza conforme o estado atual
+    if (plannedExpanded) {
+      renderPlannedFull(plannedData);
+    } else {
+      renderPlannedCompact(plannedData);
     }
+  }
+
+  // Helpers para formatar horários relativos (em minutos) e HH:MM
+  function relMinutes(iso) {
+    try {
+      const now = Date.now();
+      const t = new Date(iso).getTime();
+      const diff = Math.round((t - now) / 60000);
+      if (diff <= 0) return "agora";
+      if (diff === 1) return "em 1 min";
+      return `em ${diff} min`;
+    } catch {
+      return "";
+    }
+  }
+  function hhmm(iso) {
+    try {
+      return new Date(iso).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    } catch {
+      return iso || "";
+    }
+  }
+
+  // Renderização compacta: mostra o próximo envio em destaque e dois seguintes como pílulas
+  function renderPlannedCompact(list) {
+    const ul = $("#planned-list");
+    if (!ul) return;
+    ul.innerHTML = "";
+    const top3 = list.slice(0, 3);
+
+    // Principal: próximo envio
+    const liNext = document.createElement("li");
+    liNext.className = "planned-next";
+    liNext.innerHTML = `
+      <span class="time">${hhmm(top3[0])}</span>
+      <span class="rel muted">${relMinutes(top3[0])}</span>
+    `;
+    ul.appendChild(liNext);
+
+    // Segunda linha: pílulas para os próximos dois
+    if (top3.length > 1) {
+      const liPills = document.createElement("li");
+      liPills.className = "pill-row";
+      for (let i = 1; i < top3.length; i++) {
+        const span = document.createElement("span");
+        span.className = "pill";
+        span.textContent = hhmm(top3[i]);
+        span.title = relMinutes(top3[i]);
+        liPills.appendChild(span);
+      }
+      ul.appendChild(liPills);
+    }
+
+    // Botão para expandir lista completa
+    const remain = list.length - top3.length;
+    if (remain > 0) {
+      const liToggle = document.createElement("li");
+      liToggle.innerHTML = `<button type="button" class="planned-toggle">ver todos (+${remain})</button>`;
+      liToggle.querySelector("button").addEventListener("click", () => {
+        plannedExpanded = true;
+        renderPlannedFull(plannedData);
+      });
+      ul.appendChild(liToggle);
+    }
+  }
+
+  // Renderização completa: lista todos os horários com scroll
+  function renderPlannedFull(list) {
+    const ul = $("#planned-list");
+    if (!ul) return;
+    ul.innerHTML = "";
+    // Caixa rolável contendo a lista completa
+    const box = document.createElement("div");
+    box.className = "planned-all";
+    const inner = document.createElement("ul");
+    inner.className = "planned-list";
+    list.forEach((iso, i) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<span>${hhmm(iso)}</span><span class="muted">#${i+1}</span>`;
+      inner.appendChild(li);
+    });
+    box.appendChild(inner);
+
+    // Botão para reduzir lista
+    const liToggle = document.createElement("li");
+    liToggle.innerHTML = `<button type="button" class="planned-toggle">mostrar menos</button>`;
+    liToggle.querySelector("button").addEventListener("click", () => {
+      plannedExpanded = false;
+      renderPlannedCompact(plannedData);
+    });
+
+    // Inserir no host
+    const hostLi = document.createElement("li");
+    hostLi.appendChild(box);
+    ul.appendChild(hostLi);
+    ul.appendChild(liToggle);
   }
 
   function pushFeed({at, name, phone, status}) {
