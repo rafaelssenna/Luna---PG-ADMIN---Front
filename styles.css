@@ -190,7 +190,8 @@ button.secondary:hover, .secondary:hover { background: var(--secondary-hover); }
  */
 .loading-overlay {
   position: fixed;
-  top: 1rem;
+  /* Posiciona o loader discretamente no canto inferior direito */
+  bottom: 1rem;
   right: 1rem;
   width: 2.5rem;
   height: 2.5rem;
