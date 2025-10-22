@@ -1,4 +1,4 @@
-/* app.js — Luna (corrigido para normalizar endpoint e evitar travamentos)
+/* app.js — Luna (com limite diário por cliente + loader discreto + quota na aba Progresso)
    Arquivo completo
 */
 
@@ -83,13 +83,16 @@ const state = {
   kpis: { totais: 0, enviados: 0, fila: 0, pendentes: 0, last_sent_at: null },
   settings: {
     autoRun: false, iaAuto: false, instanceUrl: "", instanceToken: "",
-    instanceAuthHeader: "token", instanceAuthScheme: ""
+    instanceAuthHeader: "token", instanceAuthScheme: "", dailyLimit: 30
   }
 };
 
 // >>> Flags para evitar buscas concorrentes de leads
 let leadsBusy = false;
 let lastLeadParams = null;
+
+// >>> Atualização periódica da cota quando a aba Progresso está ativa
+let quotaInterval = null;
 
 // >>> FUNÇÃO ADICIONADA: atualiza o texto do botão de loop conforme o estado no servidor
 async function refreshLoopCta() {
@@ -115,12 +118,44 @@ async function refreshLoopCta() {
   }
 }
 
+// Atualiza cota (Progress → Cota de Hoje)
+async function loadQuota() {
+  if (!state.selected) return;
+  try {
+    const s = await api(`/api/loop-state?client=${encodeURIComponent(state.selected)}`);
+    const cap = Number(s.cap || 0) || 0;
+    const sent = Number(s.sent_today || 0) || 0;
+    const remaining = Number(s.remaining_today || 0) || Math.max(cap - sent, 0);
+    const pct = cap > 0 ? Math.min(100, Math.round((sent / cap) * 100)) : 0;
+
+    $("#quota-cap") && ($("#quota-cap").textContent = cap);
+    $("#quota-sent") && ($("#quota-sent").textContent = sent);
+    $("#quota-remaining") && ($("#quota-remaining").textContent = remaining);
+    $("#quota-fill") && ($("#quota-fill").style.width = `${pct}%`);
+    $("#quota-updated") && ($("#quota-updated").textContent =
+      `Atualizado em ${new Date().toLocaleString("pt-BR")}`);
+
+    // também ajusta CTA
+    await refreshLoopCta();
+  } catch (e) {
+    // Silencioso: já há toast no api()
+  }
+}
+
 // Tab navigation
 function activateTab(tab) {
   $$(".tab-btn").forEach(b => b.classList.remove("active"));
   $(`.tab-btn[data-tab="${tab}"]`)?.classList.add("active");
   $$(".tab").forEach(s => s.classList.add("tab-hidden"));
   $(`#tab-${tab}`)?.classList.remove("tab-hidden");
+
+  // Inicia/para auto-refresh da cota quando a aba Progresso está ativa
+  if (tab === "progress") {
+    loadQuota(); // imediato
+    if (!quotaInterval) quotaInterval = setInterval(loadQuota, 30000);
+  } else {
+    if (quotaInterval) { clearInterval(quotaInterval); quotaInterval = null; }
+  }
 }
 
 // Clients
@@ -181,8 +216,9 @@ async function selectClient(slug) {
     loadTotals(),
     loadServerSettings()
   ]);
-  // Atualiza o botão de loop conforme a cota/estado do dia
+  // Atualiza o botão de loop e a cota
   await refreshLoopCta();
+  await loadQuota();
 }
 
 // KPIs
@@ -269,7 +305,7 @@ async function markAsSent(phone, name="") {
       body: JSON.stringify({ client: state.selected, phone, markSent: true })
     });
     showToast("Contato marcado como enviado", "success");
-    await Promise.all([loadQueue(), loadTotals(), loadStats(), loadClients()]);
+    await Promise.all([loadQueue(), loadTotals(), loadStats(), loadClients(), loadQuota()]);
   } catch {}
 }
 
@@ -281,7 +317,7 @@ async function removeFromQueue(phone) {
       body: JSON.stringify({ client: state.selected, phone, markSent: false })
     });
     showToast("Contato removido da fila", "success");
-    await Promise.all([loadQueue(), loadStats(), loadClients()]);
+    await Promise.all([loadQueue(), loadStats(), loadClients(), loadQuota()]);
   } catch {}
 }
 
@@ -324,8 +360,8 @@ function renderTotals() {
   }
   const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize));
   $("#totalsPageInfo") && ($("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`);
-  $("#totalsPrev") && ($("#totalsPrev").disabled = state.totals.page <= 1);
-  $("#totalsNext") && ($("#totalsNext").disabled = state.totals.page >= totalPages);
+  $("#totalsPrev") && ($("#totalsPrev").disabled = state.totals.page <= 1));
+  $("#totalsNext") && ($("#totalsNext").disabled = state.totals.page >= totalPages));
 }
 
 // Contatos / CSV
@@ -347,7 +383,7 @@ async function addContact() {
     if ($("#addName"))  $("#addName").value  = "";
     if ($("#addPhone")) $("#addPhone").value = "";
     if ($("#addNiche")) $("#addNiche").value = "";
-    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
+    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()]);
   } catch {}
 }
 
@@ -366,7 +402,7 @@ async function importCSV(file) {
         `Inseridos: ${result.inserted || 0} | Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
     }
     showToast("Importação concluída", "success");
-    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
+    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()]);
   } catch (e) {
     showToast(`Erro na importação`, "error");
   } finally { hideLoading(); }
@@ -383,22 +419,28 @@ async function loadServerSettings() {
       instanceUrl: s.instanceUrl || "",
       instanceToken: s.instanceToken || "",
       instanceAuthHeader: s.instanceAuthHeader || "token",
-      instanceAuthScheme: s.instanceAuthScheme || ""
+      instanceAuthScheme: s.instanceAuthScheme || "",
+      dailyLimit: Number.isFinite(Number(s.dailyLimit)) ? Number(s.dailyLimit) : 30
     };
   } catch {
-    state.settings = { autoRun:false, iaAuto:false, instanceUrl:"", instanceToken:"", instanceAuthHeader:"token", instanceAuthScheme:"" };
+    state.settings = { autoRun:false, iaAuto:false, instanceUrl:"", instanceToken:"", instanceAuthHeader:"token", instanceAuthScheme:"", dailyLimit:30 };
   }
-  $("#cfgAutoRun") && ($("#cfgAutoRun").checked = !!state.settings.autoRun);
-  $("#cfgIaAuto") && ($("#cfgIaAuto").checked = !!state.settings.iaAuto);
+  $("#cfgAutoRun")     && ($("#cfgAutoRun").checked = !!state.settings.autoRun);
+  $("#cfgIaAuto")      && ($("#cfgIaAuto").checked = !!state.settings.iaAuto);
   $("#cfgInstanceUrl") && ($("#cfgInstanceUrl").value = state.settings.instanceUrl || "");
-  $("#cfgAuthHeader") && ($("#cfgAuthHeader").value = state.settings.instanceAuthHeader || "token");
-  $("#cfgToken") && ($("#cfgToken").value = state.settings.instanceToken || "");
-  $("#cfgAuthScheme") && ($("#cfgAuthScheme").value = state.settings.instanceAuthScheme || "");
-  $("#cfgMeta") && ($("#cfgMeta").textContent = "");
+  $("#cfgAuthHeader")  && ($("#cfgAuthHeader").value = state.settings.instanceAuthHeader || "token");
+  $("#cfgToken")       && ($("#cfgToken").value = state.settings.instanceToken || "");
+  $("#cfgAuthScheme")  && ($("#cfgAuthScheme").value = state.settings.instanceAuthScheme || "");
+  $("#cfgDailyLimit")  && ($("#cfgDailyLimit").value = (state.settings.dailyLimit ?? 30));
+  $("#cfgMeta")        && ($("#cfgMeta").textContent = "");
 }
 
 async function saveServerSettings() {
   if (!state.selected) return;
+  // dailyLimit: deixa em branco para manter valor atual
+  let dailyLimitRaw = ($("#cfgDailyLimit")?.value || "").trim();
+  let dailyLimit = Number.isFinite(parseInt(dailyLimitRaw, 10)) ? Math.max(1, Math.min(10000, parseInt(dailyLimitRaw, 10))) : null;
+
   const payload = {
     client: state.selected,
     autoRun: $("#cfgAutoRun")?.checked || false,
@@ -406,11 +448,13 @@ async function saveServerSettings() {
     instanceUrl: normalizeInstanceUrl(($("#cfgInstanceUrl")?.value || "")),
     instanceToken: ($("#cfgToken")?.value || "").trim(),
     instanceAuthHeader: ($("#cfgAuthHeader")?.value || "token").trim() || "token",
-    instanceAuthScheme: ($("#cfgAuthScheme")?.value || "").trim()
+    instanceAuthScheme: ($("#cfgAuthScheme")?.value || "").trim(),
+    dailyLimit
   };
   try {
     await api("/api/client-settings", { method: "POST", body: JSON.stringify(payload) });
     showToast("Configurações salvas", "success");
+    await Promise.all([loadServerSettings(), loadQuota(), refreshLoopCta()]);
   } catch {}
 }
 
@@ -420,7 +464,7 @@ async function runLoop() {
   const iaAuto = $("#cfgIaAuto")?.checked || false;
   postJsonNoWait("/api/loop", { client: state.selected, iaAuto });
   showToast(`Loop solicitado para ${state.selected}`, "success");
-  Promise.allSettled([ loadStats(), loadQueue(), loadTotals(), loadClients() ]);
+  Promise.allSettled([ loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota() ]);
   // Atualiza CTA após disparar loop
   await refreshLoopCta();
 }
@@ -436,7 +480,7 @@ async function stopLoop() {
     });
     showToast("Parada do loop solicitada", "warning");
     // Atualiza indicadores rapidamente
-    Promise.allSettled([ loadStats(), loadServerSettings() ]);
+    Promise.allSettled([ loadStats(), loadServerSettings(), loadQuota(), refreshLoopCta() ]);
   } catch (e) {
     console.error(e);
     showToast("Falha ao solicitar parada do loop", "error");
@@ -450,7 +494,7 @@ async function stopLoop() {
 async function searchLeadsAndSave() {
   if (!state.selected) { showToast("Selecione um cliente", "warning"); return; }
 
-  const btn   = $("#btnLeadsSearch");
+  const btn    = $("#btnLeadsSearch");
   const region = ($("#leadRegion")?.value || "").trim();
   const niche  = ($("#leadNiche")?.value || "").trim();
   const limit  = parseInt($("#leadLimit")?.value || "100", 10);
@@ -484,7 +528,7 @@ async function searchLeadsAndSave() {
     const msg = `Encontrados: ${result.found || 0} | Inseridos: ${result.inserted || 0} | Duplicados/Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
     $("#leadsResult") && ($("#leadsResult").textContent = msg);
     showToast(`Leads adicionados: ${result.inserted || 0}`, "success");
-    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
+    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()]);
   } catch (e) {
     // api() já trata toasts
   } finally {
@@ -519,6 +563,11 @@ async function deleteClient() {
       $("#kpiEnviados")&& ($("#kpiEnviados").textContent = 0);
       $("#kpiFila")    && ($("#kpiFila").textContent = 0);
       $("#kpiLastSent")&& ($("#kpiLastSent").textContent = "—");
+      $("#quota-fill") && ($("#quota-fill").style.width = "0%");
+      $("#quota-sent") && ($("#quota-sent").textContent = "0");
+      $("#quota-cap")  && ($("#quota-cap").textContent = "30");
+      $("#quota-remaining") && ($("#quota-remaining").textContent = "0");
+      $("#quota-updated") && ($("#quota-updated").textContent = "—");
     }
   } catch (err) {
     console.error(err);
@@ -594,7 +643,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#btnRefreshAll") && $("#btnRefreshAll").addEventListener("click", async () => {
     await loadClients();
     if (state.selected) {
-      await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings()]);
+      await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings(), loadQuota(), refreshLoopCta()]);
     }
   });
 
