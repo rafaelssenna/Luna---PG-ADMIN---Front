@@ -181,8 +181,36 @@ button.secondary:hover, .secondary:hover { background: var(--secondary-hover); }
 /* Toasts & Loading (simples) */
 .toast-container { position: fixed; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 8px; z-index: 1000; }
 .toast { background: var(--card); border: 1px solid var(--card-border); border-left: 4px solid var(--accent); padding: 10px 12px; border-radius: var(--radius); box-shadow: var(--shadow-lg); }
-.loading-overlay { position: fixed; inset: 0; background: rgba(11,19,36,.8); display: flex; align-items: center; justify-content: center; z-index: 999; }
-.spinner { width: 46px; height: 46px; border: 4px solid var(--card-border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+/*
+ * Ajuste do overlay de carregamento: em vez de cobrir toda a tela com um fundo
+ * escurecido, posicionamos o indicador no canto superior direito de forma
+ * discreta. O overlay não captura eventos de clique graças a
+ * `pointer-events: none`, permitindo que a UI continue utilizável durante
+ * requisições assíncronas.
+ */
+.loading-overlay {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 1000;
+}
+
+/* Reduz o tamanho do spinner e afina o traço para ficar mais sutil */
+.loading-overlay .spinner {
+  width: 2rem;
+  height: 2rem;
+  border: 3px solid var(--card-border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Responsivo */
