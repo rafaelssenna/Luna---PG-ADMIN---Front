@@ -1,3 +1,4 @@
+
 /* Tema base */
 :root {
   --bg-start: #0b1324;
@@ -189,4 +190,29 @@ button.secondary:hover, .secondary:hover { background: var(--secondary-hover); }
   .container { grid-template-columns: 1fr; }
   .sidebar { order: 2; }
   .main { order: 1; }
+}
+/* Logo no topo */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;        /* como virou <a> */
+  color: inherit;               /* mantém tema */
+  gap: .4rem;
+}
+
+.brand-logo {
+  height: 28px;                 /* ajuste fino: 28–36px */
+  width: auto;
+  display: block;
+  image-rendering: -webkit-optimize-contrast;
+  filter: drop-shadow(0 0 0 rgba(0,0,0,0)); /* neutro; tira serrilhado em alguns navegadores */
+}
+
+@media (min-width: 1280px) {
+  .brand-logo { height: 32px; } /* um pouco maior em telas largas */
+}
+
+/* efeito sutil ao passar o mouse */
+.topbar .brand:hover .brand-logo {
+  opacity: .9;
 }
