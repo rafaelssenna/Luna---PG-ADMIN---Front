@@ -209,7 +209,7 @@ button.secondary:hover, .secondary:hover { background: var(--secondary-hover); }
 }
 
 @media (min-width: 1280px) {
-  .brand-logo { height: 32px; } /* um pouco maior em telas largas */
+  .brand-logo { height: 100px; } /* um pouco maior em telas largas */
 }
 
 /* efeito sutil ao passar o mouse */
