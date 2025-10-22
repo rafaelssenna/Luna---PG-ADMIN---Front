@@ -5,7 +5,10 @@
    - Atualiza elementos existentes:
        #quota-fill, #quota-sent, #quota-cap, #quota-remaining, #quota-updated
        #planned-list, #last-event, #progress-feed
-   - Integra com suas tabs (mostra dados ao abrir a aba Progresso)
+   - Agora também:
+       • Pré-carrega no feed os "Enviados (hoje)" via GET /api/sent-today
+         (ao abrir a aba, ao iniciar e ao encerrar um loop)
+       • Evita duplicar linhas no feed com um set de chaves
 */
 
 (() => {
@@ -14,11 +17,13 @@
   let lastSlug = null;
   let quotaTimer = null;
 
-  // Estado para controle de exibição dos próximos envios.  
-  // plannedExpanded indica se a lista completa está visível.
-  // plannedData armazena a lista completa recebida do backend.
+  // Estado para controle de exibição dos próximos envios.
   let plannedExpanded = false;
   let plannedData = [];
+
+  // Chaves já exibidas no feed (evita duplicar)
+  // chave = phone|YYYY-MM-DD|status
+  const feedKeys = new Set();
 
   // ---- util DOM ----
   const $  = (s, r=document) => r.querySelector(s);
@@ -53,13 +58,11 @@
   function setPlanned(list=[]) {
     const ul = $("#planned-list");
     if (!ul) return;
-    // Armazena a lista para alternar entre compacto e completo
     plannedData = Array.isArray(list) ? list : [];
     if (!plannedData.length) {
       ul.innerHTML = `<li class="muted">sem agendamentos ainda…</li>`;
       return;
     }
-    // Quando existir dados, renderiza conforme o estado atual
     if (plannedExpanded) {
       renderPlannedFull(plannedData);
     } else {
@@ -88,14 +91,13 @@
     }
   }
 
-  // Renderização compacta: mostra o próximo envio em destaque e dois seguintes como pílulas
+  // Renderização compacta: mostra o próximo envio e duas pílulas
   function renderPlannedCompact(list) {
     const ul = $("#planned-list");
     if (!ul) return;
     ul.innerHTML = "";
     const top3 = list.slice(0, 3);
 
-    // Principal: próximo envio
     const liNext = document.createElement("li");
     liNext.className = "planned-next";
     liNext.innerHTML = `
@@ -104,7 +106,6 @@
     `;
     ul.appendChild(liNext);
 
-    // Segunda linha: pílulas para os próximos dois
     if (top3.length > 1) {
       const liPills = document.createElement("li");
       liPills.className = "pill-row";
@@ -118,7 +119,6 @@
       ul.appendChild(liPills);
     }
 
-    // Botão para expandir lista completa
     const remain = list.length - top3.length;
     if (remain > 0) {
       const liToggle = document.createElement("li");
@@ -136,7 +136,6 @@
     const ul = $("#planned-list");
     if (!ul) return;
     ul.innerHTML = "";
-    // Caixa rolável contendo a lista completa
     const box = document.createElement("div");
     box.className = "planned-all";
     const inner = document.createElement("ul");
@@ -147,25 +146,33 @@
       inner.appendChild(li);
     });
     box.appendChild(inner);
-
-    // Botão para reduzir lista
     const liToggle = document.createElement("li");
     liToggle.innerHTML = `<button type="button" class="planned-toggle">mostrar menos</button>`;
     liToggle.querySelector("button").addEventListener("click", () => {
       plannedExpanded = false;
       renderPlannedCompact(plannedData);
     });
-
-    // Inserir no host
     const hostLi = document.createElement("li");
     hostLi.appendChild(box);
     ul.appendChild(hostLi);
     ul.appendChild(liToggle);
   }
 
-  function pushFeed({at, name, phone, status}) {
+  // --- Feed (com controle de duplicidade e opção de append/prepend) ---
+  function feedKey(phone, at, status) {
+    const day = (() => { try { return new Date(at).toISOString().slice(0,10); } catch { return ""; }})();
+    return `${phone || "-"}|${day}|${status || "-"}`;
+  }
+
+  function pushFeed({at, name, phone, status}, { prepend = true } = {}) {
     const host = $("#progress-feed");
     if (!host) return;
+
+    // evita duplicar
+    const key = feedKey(phone, at, status);
+    if (feedKeys.has(key)) return;
+    feedKeys.add(key);
+
     const row = document.createElement("div");
     row.className = "item";
     const cls = status === "success" ? "success" : (status === "skipped" ? "skipped" : "error");
@@ -173,15 +180,19 @@
       <div class="when">${fmtDT(at)}</div>
       <div><span class="who">${esc(name || "-")}</span> <span class="muted">${esc(phone || "-")}</span></div>
       <div class="status ${cls}">${status}</div>`;
-    host.prepend(row);
+
+    if (prepend) host.prepend(row); else host.appendChild(row);
+
     const last = $("#last-event");
-    if (last) last.innerHTML =
-      `${fmtDT(at)} • <strong>${esc(name || "-")}</strong> <span class="muted">${esc(phone || "-")}</span> — <span class="status ${cls}">${status}</span>`;
+    if (last && prepend) {
+      last.innerHTML = `${fmtDT(at)} • <strong>${esc(name || "-")}</strong> <span class="muted">${esc(phone || "-")}</span> — <span class="status ${cls}">${status}</span>`;
+    }
   }
 
   function clearFeed() {
     const host = $("#progress-feed");
     if (host) host.innerHTML = `<div class="muted">Aguardando eventos…</div>`;
+    feedKeys.clear();
   }
 
   // ---- Quota fetch ----
@@ -199,6 +210,27 @@
     }, debounceMs);
   }
 
+  // ---- Pré-carregar "Enviados (hoje)" no FEED ----
+  async function loadSentTodayIntoFeed(limit = 100) {
+    const slug = currentSlug();
+    if (!slug) return;
+    try {
+      const r = await fetch(`${API_BASE}/api/sent-today?client=${encodeURIComponent(slug)}&limit=${limit}`);
+      if (!r.ok) return;
+      const j = await r.json();
+      const items = Array.isArray(j.items) ? j.items : [];
+
+      // Inserimos do mais antigo para o mais novo, para que os SSE novos fiquem no topo depois
+      for (let i = items.length - 1; i >= 0; i--) {
+        const it = items[i];
+        pushFeed(
+          { at: it.updated_at, name: it.name || "-", phone: it.phone || "-", status: "success" },
+          { prepend: false }
+        );
+      }
+    } catch {}
+  }
+
   // ---- SSE ----
   function connect(force=false) {
     const slug = currentSlug();
@@ -210,7 +242,12 @@
     const url = `${API_BASE}/api/progress?client=${encodeURIComponent(slug)}`;
     es = new EventSource(url);
 
-    es.addEventListener("open", () => refreshQuota(0));
+    es.addEventListener("open", () => {
+      refreshQuota(0);
+      // Ao abrir a conexão, também pré-carrega o histórico de HOJE
+      loadSentTodayIntoFeed(100);
+    });
+
     es.addEventListener("message", (ev) => {
       try {
         const data = JSON.parse(ev.data || "{}");
@@ -232,6 +269,8 @@
     const type = evt?.type || "item";
     if (type === "start") {
       clearFeed();
+      // Mostra o que já foi enviado hoje ANTES dos novos eventos
+      loadSentTodayIntoFeed(100);
       refreshQuota(0);
       return;
     }
@@ -248,52 +287,44 @@
         name: evt.name || "-",
         phone: evt.phone || "-",
         status: evt.status || (evt.ok ? "success" : "error")
-      });
+      }, { prepend: true });
       refreshQuota(300);
       return;
     }
     if (type === "end") {
+      // Atualiza a cota e puxa o estado final de hoje (caso algo tenha sido enviado perto do fim)
       refreshQuota(0);
+      loadSentTodayIntoFeed(100);
       return;
     }
   }
 
   // ---- integração com as suas tabs ----
   function setupTabHooks() {
-    // Abre conexão quando clicar em "Progresso"
     const btn = document.getElementById("tabButtonProgress");
     if (btn) {
       btn.addEventListener("click", () => {
-        // apenas ao mostrar a aba
         setTimeout(() => { connect(true); }, 50);
       });
     }
-
-    // Se clicar em qualquer outra aba, não precisamos derrubar a conexão (pode desejar ver feed em background),
-    // mas reduzimos reconexões desnecessárias reiniciando apenas quando a aba Progresso for aberta de novo.
   }
 
-  // ---- integração com o botão "Executar Loop" (garante que o feed esteja visível) ----
+  // ---- integração com o botão "Executar Loop" ----
   function setupRunHook() {
     const run = document.getElementById("btnRunLoop");
     if (run) {
       run.addEventListener("click", () => {
-        // após o backend iniciar, conectamos/atualizamos o feed
         setTimeout(() => { connect(true); refreshQuota(300); }, 500);
       });
     }
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    // se a aba já existir, opera em modo compatível
     if (document.getElementById("tab-progress")) {
       setupTabHooks();
       setupRunHook();
-      // opcional: se a aba Progresso já estiver ativa no carregamento
       const active = document.querySelector('.tab-btn.active[data-tab="progress"]');
       if (active) connect(true);
-    } else {
-      // fallback: se no futuro remover a aba, não fazemos nada (modo seguro)
     }
   });
 
