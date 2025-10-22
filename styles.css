@@ -201,7 +201,7 @@ button.secondary:hover, .secondary:hover { background: var(--secondary-hover); }
 }
 
 .brand-logo {
-  height: 50px;                 /* ajuste fino: 28–36px */
+  height: 200px;                 /* ajuste fino: 28–36px */
   width: auto;
   display: block;
   image-rendering: -webkit-optimize-contrast;
