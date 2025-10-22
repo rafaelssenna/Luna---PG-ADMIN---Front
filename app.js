@@ -1,1506 +1,602 @@
-// server.js
-// Servidor Express para a aplicação Luna
+/* app.js — Luna (corrigido para normalizar endpoint e evitar travamentos)
+   Arquivo completo
+*/
 
-require('dotenv').config();
+const API_BASE_URL = (window.API_BASE_URL !== undefined ? window.API_BASE_URL : "");
 
-const express = require('express');
-const { Pool } = require('pg');
-const EventEmitter = require('events');
-const multer = require('multer');
-const path = require('path');
+// Utilitários DOM
+const $  = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-const app = express();
+// Toasts e Loader
+function showToast(msg, type = "info") {
+  const box = $("#toast-container");
+  if (!box) { console[type === "error" ? "error" : "log"](msg); return; }
+  const el = document.createElement("div");
+  el.className = "toast";
+  el.style.borderLeftColor = (type === "error" ? "var(--danger)" :
+                              type === "warning" ? "var(--warning)" : "var(--accent)");
+  el.textContent = msg;
+  box.appendChild(el);
+  setTimeout(() => el.remove(), 3500);
+}
+function showLoading() { const o = $("#loading-overlay"); if (o) o.style.display = "flex"; }
+function hideLoading() { const o = $("#loading-overlay"); if (o) o.style.display = "none"; }
 
-/* ======================  Janela e cota diária  ====================== */
-// Até 30 mensagens por dia, janela 08:00–17:30
-const DAILY_MESSAGE_COUNT = 30;
-const DAILY_START_TIME = '08:00:00';
-const DAILY_END_TIME = '17:30:00';
-
-/* ======================  Utils de tempo  ====================== */
-function hmsToSeconds(hms) {
-  const parts = String(hms || '').split(':').map((p) => parseInt(p, 10) || 0);
-  const h = parts[0] || 0;
-  const m = parts[1] || 0;
-  const s = parts[2] || 0;
-  return h * 3600 + m * 60 + s;
+// API helper com overlay
+async function api(path, options = {}) {
+  showLoading();
+  try {
+    const res = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    // algumas rotas podem devolver 204 sem body
+    const ct = (res.headers.get && res.headers.get("content-type")) || "";
+    if (!ct || res.status === 204) return {};
+    return await res.json();
+  } catch (e) {
+    console.error(e);
+    showToast(`Erro: ${e.message}`, "error");
+    throw e;
+  } finally { hideLoading(); }
 }
 
-/**
- * Gera delays (em segundos) para envios entre start e end, a partir de "agora".
- * O primeiro delay inclui o tempo até o início efetivo (se necessário).
- */
-function generateScheduleDelays(count, startStr, endStr) {
-  const now = new Date();
-  const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
-  const startSec = hmsToSeconds(startStr);
-  const endSec = hmsToSeconds(endStr);
-
-  const effectiveStart = Math.max(nowSec, startSec);
-  if (endSec <= effectiveStart) return [];
-  const span = endSec - effectiveStart;
-  const msgCount = Math.min(count, span);
-
-  const offsets = new Set();
-  while (offsets.size < msgCount) offsets.add(Math.floor(Math.random() * (span + 1)));
-  const sortedOffsets = Array.from(offsets).sort((a, b) => a - b);
-
-  const delays = [];
-  let prev = 0;
-  for (let i = 0; i < sortedOffsets.length; i++) {
-    const off = sortedOffsets[i];
-    if (i === 0) delays.push((effectiveStart - nowSec) + off);
-    else delays.push(off - prev);
-    prev = off;
+// Helper: dispara POST sem mostrar overlay e sem travar a UI
+async function postJsonNoWait(path, body, { timeoutMs = 1500 } = {}) {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    await fetch(`${API_BASE_URL}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+  } catch (_) {
+    /* timeout esperado */
+  } finally {
+    clearTimeout(t);
   }
-  return delays;
 }
 
-/* ======================  CORS  ====================== */
-const CORS_ANY = process.env.CORS_ANY === 'true';
-const CORS_ORIGINS = (process.env.CORS_ORIGINS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean);
+// Normaliza a URL do gateway: adiciona http(s) e /send/text se faltar
+function normalizeInstanceUrl(raw) {
+  if (!raw) return "";
+  let u = raw.trim();
+  if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+  try {
+    const url = new URL(u);
+    if (!url.pathname || url.pathname === "/") url.pathname = "/send/text";
+    u = url.toString();
+  } catch {}
+  return u.replace(/\/$/, "");
+}
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (CORS_ANY) {
-    res.setHeader('Access-Control-Allow-Origin', origin || '*');
-  } else if (CORS_ORIGINS.length > 0) {
-    if (origin && CORS_ORIGINS.includes(origin)) {
-      res.setHeader('Access-Control-Allow-Origin', origin);
-    } else {
-      res.setHeader('Access-Control-Allow-Origin', '*');
-    }
-  } else {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+// Estado global
+const state = {
+  clients: [],
+  selected: null,
+  queue: { items: [], page: 1, total: 0, pageSize: 15, search: "" },
+  totals: { items: [], page: 1, total: 0, pageSize: 15, search: "", sent: "all" },
+  kpis: { totais: 0, enviados: 0, fila: 0, pendentes: 0, last_sent_at: null },
+  settings: {
+    autoRun: false, iaAuto: false, instanceUrl: "", instanceToken: "",
+    instanceAuthHeader: "token", instanceAuthScheme: ""
   }
-  res.setHeader('Vary', 'Origin, Access-Control-Request-Headers');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,DELETE,OPTIONS');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    req.headers['access-control-request-headers'] || 'Content-Type, Authorization, token'
-  );
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  next();
-});
-
-/* ======================  Banco de Dados  ====================== */
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: false } : undefined,
-});
-
-app.use(express.json());
-app.use(express.static(path.join(__dirname)));
-
-/* ======================  Compat: endpoints sem /api  ====================== */
-const COMPAT_ENDPOINTS = new Set([
-  'clients',
-  'client-settings',
-  'stats',
-  'queue',
-  'totals',
-  'contacts',
-  'import',
-  'progress',
-  'loop',
-  'delete-client',
-  'healthz',
-  'quota',
-  /* >>> ADIÇÕES */
-  'leads',
-  'loop-state',
-  'sent-today',           // <— compat para /api/sent-today
-]);
-
-app.use((req, _res, next) => {
-  const seg = (req.path || '').replace(/^\/+/, '').split('/')[0];
-  if (seg && COMPAT_ENDPOINTS.has(seg) && !req.path.startsWith('/api/')) {
-    req.url = '/api' + (req.url.startsWith('/') ? req.url : '/' + req.url);
-  }
-  next();
-});
-
-const upload = multer({ storage: multer.memoryStorage() });
-
-function validateSlug(slug) {
-  // aceita nomes de tabela com minúsculas, números e underline (1..64)
-  return /^[a-z0-9_]{1,64}$/.test(slug);
-}
-
-/* ======================  Estado e SSE por cliente  ====================== */
-const runningClients = new Set();
-const progressEmitters = new Map();
-function getEmitter(slug) {
-  if (!progressEmitters.has(slug)) progressEmitters.set(slug, new EventEmitter());
-  return progressEmitters.get(slug);
-}
-const progressStates = new Map();
-function snapshotStart(slug, total) {
-  progressStates.set(slug, {
-    lastStart: { type: 'start', total, at: new Date().toISOString() },
-    items: [],
-    lastEnd: null,
-  });
-}
-function snapshotPush(slug, evt) {
-  const st = progressStates.get(slug);
-  if (!st) return;
-  st.items.push(evt);
-  if (st.items.length > 200) st.items.shift();
-}
-function snapshotEnd(slug, processed, extra = {}) {
-  const st = progressStates.get(slug);
-  if (!st) return;
-  st.lastEnd = { type: 'end', processed, ...extra, at: new Date().toISOString() };
-}
-
-/* ======================  Tabela de settings por cliente  ====================== */
-async function ensureSettingsTable() {
-  await pool.query(`
-CREATE TABLE IF NOT EXISTS client_settings (
-  slug TEXT PRIMARY KEY,
-  auto_run BOOLEAN DEFAULT false,
-  ia_auto BOOLEAN DEFAULT false,
-  instance_url TEXT,
-  instance_token TEXT,
-  instance_auth_header TEXT,
-  instance_auth_scheme TEXT,
-  loop_status TEXT DEFAULT 'idle',
-  last_run_at TIMESTAMPTZ
-);
-ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS instance_token TEXT;
-ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS instance_auth_header TEXT;
-ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS instance_auth_scheme TEXT;
-ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS loop_status TEXT DEFAULT 'idle';
-ALTER TABLE client_settings ADD COLUMN IF NOT EXISTS last_run_at TIMESTAMPTZ;
-`);
-}
-ensureSettingsTable().catch((e) => console.error('ensureSettingsTable', e));
-
-async function getClientSettings(slug) {
-  const { rows } = await pool.query(
-    `SELECT auto_run, ia_auto, instance_url, loop_status, last_run_at,
-            instance_token, instance_auth_header, instance_auth_scheme
-       FROM client_settings
-      WHERE slug = $1`,
-    [slug]
-  );
-  if (!rows.length) {
-    return {
-      auto_run: false,
-      ia_auto: false,
-      instance_url: null,
-      instance_token: null,
-      instance_auth_header: null,
-      instance_auth_scheme: null,
-      loop_status: 'idle',
-      last_run_at: null,
-    };
-  }
-  return rows[0];
-}
-
-async function saveClientSettings(
-  slug,
-  { autoRun, iaAuto, instanceUrl, instanceToken, instanceAuthHeader, instanceAuthScheme }
-) {
-  await pool.query(
-    `INSERT INTO client_settings
-       (slug, auto_run, ia_auto, instance_url, instance_token, instance_auth_header, instance_auth_scheme)
-     VALUES ($1,   $2,       $3,     $4,           $5,             $6,                   $7)
-     ON CONFLICT (slug)
-     DO UPDATE SET
-       auto_run = EXCLUDED.auto_run,
-       ia_auto = EXCLUDED.ia_auto,
-       instance_url = EXCLUDED.instance_url,
-       instance_token = EXCLUDED.instance_token,
-       instance_auth_header = EXCLUDED.instance_auth_header,
-       instance_auth_scheme = EXCLUDED.instance_auth_scheme`,
-    [
-      slug,
-      !!autoRun,
-      !!iaAuto,
-      instanceUrl || null,
-      instanceToken || null,
-      instanceAuthHeader || 'token',
-      instanceAuthScheme ?? '',
-    ]
-  );
-}
-
-/* ======================  IA (UAZAPI) ====================== */
-function normalizePhoneE164BR(phone) {
-  const digits = String(phone || '').replace(/\D/g, '');
-  if (!digits) return '';
-  if (digits.startsWith('55')) return `+${digits}`;
-  if (digits.length === 11) return `+55${digits}`;
-  return `+${digits}`;
-}
-
-function fillTemplate(tpl, vars) {
-  return String(tpl || '').replace(/\{(NAME|CLIENT|PHONE)\}/gi, (_, k) => {
-    const key = k.toUpperCase();
-    return vars[key] ?? '';
-  });
-}
-
-const UAZ = {
-  token: process.env.UAZAPI_TOKEN || '',
-  authHeader: process.env.UAZAPI_AUTH_HEADER || 'token',
-  authScheme: process.env.UAZAPI_AUTH_SCHEME ?? '',
-  phoneField: process.env.UAZAPI_PHONE_FIELD || 'phone',
-  textField: process.env.UAZAPI_TEXT_FIELD || 'message',
-  digitsOnly: (process.env.UAZAPI_PHONE_DIGITS_ONLY || 'true') === 'true',
-  payloadStyle: (process.env.UAZAPI_PAYLOAD_STYLE || 'json').toLowerCase(),
-  methodPref: (process.env.UAZAPI_METHOD || 'post').toLowerCase(),
-  extra: (() => {
-    try { return JSON.parse(process.env.UAZAPI_EXTRA || '{}'); }
-    catch { return {}; }
-  })(),
-  template: process.env.MESSAGE_TEMPLATE || 'Olá {NAME}, aqui é do {CLIENT}.',
 };
 
-function buildUazRequest(instanceUrl, { e164, digits, text }) {
-  const hasTpl = /\{(NUMBER|PHONE_E164|TEXT)\}/.test(instanceUrl);
-  const hasQueryParams = /\?[^#]*=/.test(instanceUrl);
-  const style = UAZ.payloadStyle;
-  const methodEnv = UAZ.methodPref;
+// >>> Flags para evitar buscas concorrentes de leads
+let leadsBusy = false;
+let lastLeadParams = null;
 
-  const decideMethod = () => {
-    if (methodEnv === 'get') return 'GET';
-    if (methodEnv === 'post') return 'POST';
-    return (hasTpl || hasQueryParams) ? 'GET' : 'POST';
-  };
-
-  const method = decideMethod();
-  const phoneValue = UAZ.digitsOnly ? digits : e164;
-
-  const makeJson = () => {
-    const payload = { ...UAZ.extra };
-    payload[UAZ.phoneField] = phoneValue;
-    payload[UAZ.textField] = text;
-    return {
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    };
-  };
-
-  if (style === 'template' || hasTpl) {
-    if (method === 'GET') {
-      const url = instanceUrl
-        .replace(/\{NUMBER\}/g, digits)
-        .replace(/\{PHONE_E164\}/g, encodeURIComponent(e164))
-        .replace(/\{TEXT\}/g, encodeURIComponent(text));
-      return { url, method: 'GET' };
-    }
-    let cleanUrl;
-    try { const u = new URL(instanceUrl); cleanUrl = u.origin + u.pathname; }
-    catch { cleanUrl = instanceUrl.split('?')[0]; }
-    const j = makeJson();
-    return { url: cleanUrl, method: 'POST', headers: j.headers, body: j.body };
-  }
-
-  if (style === 'query' || (hasQueryParams && style === 'auto')) {
-    const u = new URL(instanceUrl);
-    if (method === 'GET') {
-      u.searchParams.set(UAZ.phoneField, phoneValue);
-      u.searchParams.set(UAZ.textField, text);
-      Object.entries(UAZ.extra || {}).forEach(([k, v]) => {
-        if (['string', 'number', 'boolean'].includes(typeof v)) u.searchParams.set(k, String(v));
-      });
-      return { url: u.toString(), method: 'GET' };
-    }
-    const cleanUrl = u.origin + u.pathname;
-    const j = makeJson();
-    return { url: cleanUrl, method: 'POST', headers: j.headers, body: j.body };
-  }
-
-  if (style === 'form') {
-    const form = new URLSearchParams();
-    Object.entries(UAZ.extra || {}).forEach(([k, v]) =>
-      form.set(k, typeof v === 'object' ? JSON.stringify(v) : String(v))
-    );
-    form.set(UAZ.phoneField, phoneValue);
-    form.set(UAZ.textField, text);
-    const headers = { 'Content-Type': 'application/x-www-form-urlencoded' };
-    return { url: instanceUrl, method: 'POST', headers, body: form.toString() };
-  }
-
-  const j = makeJson();
-  return { url: instanceUrl, method: 'POST', headers: j.headers, body: j.body };
-}
-
-async function httpSend({ url, method, headers, body }) {
-  if (typeof fetch === 'function') {
-    return fetch(url, { method, headers, body });
-  }
+// >>> FUNÇÃO ADICIONADA: atualiza o texto do botão de loop conforme o estado no servidor
+async function refreshLoopCta() {
+  const btn = $("#btnRunLoop");
+  if (!state.selected || !btn) return;
   try {
-    const nf = require('node-fetch');
-    if (nf) return nf(url, { method, headers, body });
-  } catch {}
-  return new Promise((resolve, reject) => {
-    try {
-      const URLmod = new URL(url);
-      const httpMod = URLmod.protocol === 'https:' ? require('https') : require('http');
-      const req = httpMod.request(
-        {
-          hostname: URLmod.hostname,
-          port: URLmod.port || (URLmod.protocol === 'https:' ? 443 : 80),
-          path: URLmod.pathname + URLmod.search,
-          method: method || 'GET',
-          headers: headers || {},
-        },
-        (res) => {
-          let data = '';
-          res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => {
-            resolve({
-              ok: res.statusCode >= 200 && res.statusCode < 300,
-              status: res.statusCode,
-              json: async () => { try { return JSON.parse(data); } catch { return { raw: data }; } },
-              text: async () => data,
-            });
-          });
-        }
-      );
-      req.on('error', reject);
-      if (body) req.write(body);
-      req.end();
-    } catch (err) {
-      reject(err);
-    }
-  });
-}
-
-async function runIAForContact({
-  client,
-  name,
-  phone,
-  instanceUrl,
-  instanceToken,
-  instanceAuthHeader,
-  instanceAuthScheme,
-}) {
-  const SHOULD_CALL = process.env.IA_CALL === 'true';
-  if (!SHOULD_CALL || !instanceUrl) return { ok: true, simulated: true };
-
-  try {
-    const e164 = normalizePhoneE164BR(phone);
-    const digits = String(e164).replace(/\D/g, '');
-    const text = fillTemplate(UAZ.template, { NAME: name, CLIENT: client, PHONE: e164 });
-
-    const req = buildUazRequest(instanceUrl, { e164, digits, text });
-
-    const hdrName =
-      (instanceAuthHeader && instanceAuthHeader.trim()) || UAZ.authHeader || 'token';
-    const hdrScheme =
-      instanceAuthScheme !== undefined ? instanceAuthScheme : UAZ.authScheme || '';
-    const tokenVal = (instanceToken && String(instanceToken)) || UAZ.token || '';
-    if (tokenVal) {
-      req.headers = req.headers || {};
-      req.headers[hdrName] = `${hdrScheme}${tokenVal}`;
-    }
-
-    if (process.env.DEBUG === 'true') {
-      const maskedHeaders = Object.fromEntries(
-        Object.entries(req.headers || {}).map(([k, v]) => [
-          k,
-          k.toLowerCase().includes('token') || k.toLowerCase().includes('authorization') ? '***' : v,
-        ])
-      );
-      console.log('[UAZAPI] request', {
-        url: req.url,
-        method: req.method,
-        headers: maskedHeaders,
-        hasBody: !!req.body,
-      });
-    }
-
-    const resp = await httpSend(req);
-    let body;
-    try { body = await resp.json(); } catch { body = await resp.text(); }
-    if (!resp.ok) {
-      console.error('UAZAPI FAIL', { status: resp.status, body });
-    }
-    return { ok: resp.ok, status: resp.status, body };
-  } catch (err) {
-    console.error('UAZAPI ERROR', instanceUrl, err);
-    return { ok: false, error: String(err) };
-  }
-}
-
-/* ======================  Helpers  ====================== */
-async function tableExists(tableName) {
-  const { rows } = await pool.query('SELECT to_regclass($1) AS reg;', [`public.${tableName}`]);
-  return !!rows[0].reg;
-}
-
-function norm(s) {
-  return (s ?? '')
-    .toString()
-    .trim()
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '');
-}
-function detectDelimiter(firstLine) {
-  const commas = (firstLine.match(/,/g) || []).length;
-  const semis = (firstLine.match(/;/g) || []).length;
-  return semis > commas ? ';' : ',';
-}
-function parseCSV(text, delim) {
-  const rows = [];
-  let row = [], val = '', inQuotes = false;
-  for (let i = 0; i < text.length; i++) {
-    const ch = text[i];
-    if (ch === '"') {
-      if (inQuotes && text[i + 1] === '"') { val += '"'; i++; }
-      else { inQuotes = !inQuotes; }
-      continue;
-    }
-    if (ch === '\r') continue;
-    if (ch === '\n' && !inQuotes) { row.push(val); rows.push(row); row = []; val = ''; continue; }
-    if (ch === delim && !inQuotes) { row.push(val); val = ''; continue; }
-    val += ch;
-  }
-  if (val.length > 0 || row.length > 0) { row.push(val); rows.push(row); }
-  return rows;
-}
-function mapHeader(headerCells) {
-  const idx = { name: -1, phone: -1, niche: -1 };
-  const names = headerCells.map((h) => norm(h));
-  const isId = (h) => ['id', 'identificador', 'codigo', 'código'].includes(h);
-  const nameKeys = new Set(['nome','name','full_name','fullname','contato','empresa','nomefantasia','razaosocial']);
-  const phoneKeys = new Set(['telefone','numero','número','phone','whatsapp','celular','mobile','telemovel']);
-  const nicheKeys = new Set(['nicho','niche','segmento','categoria','industry']);
-  names.forEach((h, i) => {
-    if (isId(h)) return;
-    if (idx.name === -1 && nameKeys.has(h)) idx.name = i;
-    if (idx.phone === -1 && phoneKeys.has(h)) idx.phone = i;
-    if (idx.niche === -1 && nicheKeys.has(h)) idx.niche = i;
-  });
-  return idx;
-}
-
-/* ======================  ADIÇÃO: integração com buscador de leads  ====================== */
-const { searchLeads } = require('./leadsSearcher');
-
-async function ensureRegionColumns(slug) {
-  try {
-    await pool.query(`ALTER TABLE "${slug}" ADD COLUMN IF NOT EXISTS region TEXT;`);
-  } catch (e) { console.warn('ensureRegionColumns fila', slug, e?.message); }
-  try {
-    await pool.query(`ALTER TABLE "${slug}_totais" ADD COLUMN IF NOT EXISTS region TEXT;`);
-  } catch (e) { console.warn('ensureRegionColumns totais', slug, e?.message); }
-}
-
-/* ======================  Endpoints ====================== */
-
-/** Healthcheck */
-app.get('/api/healthz', (_req, res) => res.json({ up: true }));
-
-/* ---------- NOVA ROTA: Estado do loop / cota de hoje ---------- */
-app.get('/api/loop-state', async (req, res) => {
-  const slug = req.query.client;
-  if (!slug || !validateSlug(slug)) return res.status(400).json({ error: 'Cliente inválido' });
-
-  try {
-    const cap = DAILY_MESSAGE_COUNT;
-
-    let sent_today = 0;
-    try {
-      const r = await pool.query(
-        `SELECT COUNT(*)::int AS c
-           FROM "${slug}_totais"
-          WHERE mensagem_enviada = true
-            AND updated_at::date = CURRENT_DATE;`
-      );
-      sent_today = Number(r.rows?.[0]?.c || 0);
-    } catch {}
-
-    let loop_status = 'idle', last_run_at = null;
-    try {
-      const r2 = await pool.query(
-        `SELECT loop_status, last_run_at FROM client_settings WHERE slug = $1;`,
-        [slug]
-      );
-      if (r2.rows[0]) {
-        loop_status = r2.rows[0].loop_status || 'idle';
-        last_run_at = r2.rows[0].last_run_at || null;
-      }
-    } catch {}
-
-    const remaining_today = Math.max(0, cap - sent_today);
-    res.json({
-      cap,
-      sent_today,
-      remaining_today,
-      window_start: DAILY_START_TIME,
-      window_end: DAILY_END_TIME,
-      loop_status,
-      last_run_at,
-      now: new Date().toISOString(),
-    });
-  } catch (err) {
-    console.error('Erro em /api/loop-state', err);
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-/* ---------- FIM: loop-state ---------- */
-
-/* ---------- ROTA DE BUSCA DE LEADS (consulta) ---------- */
-app.get('/api/leads/search', async (req, res) => {
-  try {
-    const region = req.query.region || req.query.local || req.query.city || '';
-    const niche  = req.query.niche  || req.query.nicho || req.query.segment || '';
-    const limit  = parseInt(req.query.limit || req.query.n || '0', 10) || undefined;
-
-    const items = await searchLeads({ region, niche, limit });
-    return res.json({ items, count: items.length });
-  } catch (err) {
-    console.error('Erro em /api/leads/search', err);
-    return res.status(500).json({ error: 'Erro interno ao consultar leads' });
-  }
-});
-/* ---------- FIM: NOVA ROTA DE BUSCA ---------- */
-
-/** NOVA ROTA: Enviados (hoje) — para pré-carregar no feed */
-app.get('/api/sent-today', async (req, res) => {
-  const slug = req.query.client;
-  if (!slug || !validateSlug(slug)) return res.status(400).json({ error: 'Cliente inválido' });
-
-  const table = `${slug}_totais`;
-  const exists = await tableExists(table);
-  if (!exists) return res.json({ items: [], total: 0 });
-
-  const limit = Math.min(Math.max(parseInt(req.query.limit || '100', 10) || 100, 1), 500);
-  const offset = Math.max(parseInt(req.query.offset || '0', 10) || 0, 0);
-
-  try {
-    const itemsSql = `
-      SELECT name, phone, niche, updated_at
-        FROM "${table}"
-       WHERE mensagem_enviada = true
-         AND updated_at::date = CURRENT_DATE
-       ORDER BY updated_at DESC
-       LIMIT $1 OFFSET $2;`;
-    const itemsRes = await pool.query(itemsSql, [limit, offset]);
-    const items = itemsRes.rows;
-
-    const countSql = `
-      SELECT COUNT(*)::int AS total
-        FROM "${table}"
-       WHERE mensagem_enviada = true
-         AND updated_at::date = CURRENT_DATE;`;
-    const countRes = await pool.query(countSql);
-    const total = Number(countRes.rows?.[0]?.total || 0);
-
-    res.json({ items, total });
-  } catch (err) {
-    console.error('Erro em /api/sent-today', err);
-    res.status(500).json({ error: 'Erro interno ao consultar enviados de hoje' });
-  }
-});
-
-/** Lista clientes (slug e fila) + flags salvas */
-app.get('/api/clients', async (_req, res) => {
-  try {
-    // pega todas as tabelas "base" que têm um par _totais correspondente
-    const result = await pool.query(
-      `SELECT t.table_name AS slug
-         FROM information_schema.tables t
-        WHERE t.table_schema = 'public'
-          AND t.table_type   = 'BASE TABLE'
-          AND t.table_name NOT LIKE '%\\_totais'
-          AND EXISTS (
-                SELECT 1
-                  FROM information_schema.tables t2
-                 WHERE t2.table_schema = 'public'
-                   AND t2.table_name   = t.table_name || '_totais'
-          )
-        ORDER BY t.table_name;`
-    );
-
-    const slugs = result.rows.map(r => r.slug);
-    const clients = [];
-    for (const slug of slugs) {
-      try {
-        const [countRes, cfgRes] = await Promise.all([
-          pool.query(`SELECT COUNT(*) AS count FROM "${slug}";`),
-          pool.query(
-            `SELECT auto_run, ia_auto, instance_url, loop_status, last_run_at
-               FROM client_settings WHERE slug = $1;`,
-            [slug]
-          ),
-        ]);
-        const queueCount = Number(countRes.rows[0].count);
-        const autoRun    = !!cfgRes.rows[0]?.auto_run;
-        const iaAuto     = !!cfgRes.rows[0]?.ia_auto;
-        const instanceUrl= cfgRes.rows[0]?.instance_url || null;
-        const loopStatus = cfgRes.rows[0]?.loop_status || 'idle';
-        const lastRunAt  = cfgRes.rows[0]?.last_run_at || null;
-        clients.push({ slug, queueCount, autoRun, iaAuto, instanceUrl, loopStatus, lastRunAt });
-      } catch (innerErr) {
-        console.error('Erro ao contar fila para', slug, innerErr);
-        clients.push({ slug });
-      }
-    }
-    res.json(clients);
-  } catch (err) {
-    console.error('Erro ao listar clientes', err);
-    res.status(500).json({ error: 'Erro interno ao listar clientes' });
-  }
-});
-
-
-/** KPIs (inclui info do último envio) */
-app.get('/api/stats', async (req, res) => {
-  const slug = req.query.client;
-  if (!slug || !validateSlug(slug)) return res.status(400).json({ error: 'Cliente inválido' });
-
-  const filaTable = `${slug}`;
-  const totaisTable = `${slug}_totais`;
-
-  try {
-    const [hasFila, hasTotais] = await Promise.all([tableExists(filaTable), tableExists(totaisTable)]);
-    let totais = 0, enviados = 0, fila = 0, lastSentAt = null, lastSentName = null, lastSentPhone = null;
-
-    if (hasTotais) {
-      const r = await pool.query(
-        `SELECT
-           (SELECT COUNT(*) FROM "${totaisTable}") AS totais,
-           (SELECT COUNT(*) FROM "${totaisTable}" WHERE mensagem_enviada = true) AS enviados;`
-      );
-      totais = Number(r.rows[0].totais);
-      enviados = Number(r.rows[0].enviados);
-
-      const r3 = await pool.query(
-        `SELECT name, phone, updated_at
-           FROM "${totaisTable}"
-          WHERE mensagem_enviada = true
-          ORDER BY updated_at DESC
-          LIMIT 1;`
-      );
-      if (r3.rows[0]) {
-        lastSentAt = r3.rows[0].updated_at;
-        lastSentName = r3.rows[0].name;
-        lastSentPhone = r3.rows[0].phone;
-      }
-    }
-
-    if (hasFila) {
-      const r2 = await pool.query(`SELECT COUNT(*) AS fila FROM "${filaTable}";`);
-      fila = Number(r2.rows[0].fila);
-    }
-
-    res.json({
-      totais,
-      enviados,
-      pendentes: totais - enviados,
-      fila,
-      last_sent_at: lastSentAt,
-      last_sent_name: lastSentName,
-      last_sent_phone: lastSentPhone,
-    });
-  } catch (err) {
-    console.error('Erro ao obter estatísticas', err);
-    res.status(500).json({ error: 'Erro interno ao obter estatísticas' });
-  }
-});
-
-/** Quota diária (cap, enviados hoje, restantes, janela) */
-app.get('/api/quota', async (req, res) => {
-  const slug = req.query.client;
-  if (!slug || !validateSlug(slug)) return res.status(400).json({ error: 'Cliente inválido' });
-  try {
-    const cap = DAILY_MESSAGE_COUNT;
-    const r = await pool.query(
-      `SELECT COUNT(*)::int AS c
-         FROM "${slug}_totais"
-        WHERE mensagem_enviada = true
-          AND updated_at::date = CURRENT_DATE;`
-    );
-    const sent_today = Number(r.rows?.[0]?.c || 0);
-    const remaining = Math.max(0, cap - sent_today);
-    res.json({
-      cap,
-      sent_today,
-      remaining,
-      window_start: DAILY_START_TIME,
-      window_end: DAILY_END_TIME,
-      now: new Date().toISOString()
-    });
-  } catch (err) {
-    console.error('Erro em /api/quota', err);
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-/** Fila (pagina/filtra) — blindado para tabela ausente */
-app.get('/api/queue', async (req, res) => {
-  const slug = req.query.client;
-  if (!slug || !validateSlug(slug)) return res.status(400).json({ error: 'Cliente inválido' });
-
-  const exists = await tableExists(slug);
-  if (!exists) return res.json({ items: [], total: 0 });
-
-  const page = parseInt(req.query.page) || 1;
-  const pageSize = parseInt(req.query.pageSize) || 25;
-  const search = req.query.search || '';
-  const offset = (page - 1) * pageSize;
-  const values = [];
-  let whereClause = '';
-
-  if (search) {
-    values.push(`%${search}%`);
-    whereClause = `WHERE name ILIKE $1 OR phone ILIKE $1`;
-  }
-
-  try {
-    const itemsSql = `
-      SELECT name, phone
-        FROM "${slug}"
-      ${whereClause}
-      ORDER BY name
-      LIMIT $${values.length + 1} OFFSET $${values.length + 2};
-    `;
-    const itemsRes = await pool.query(itemsSql, [...values, pageSize, offset]);
-    const items = itemsRes.rows;
-
-    const countSql = `SELECT COUNT(*) AS total FROM "${slug}" ${whereClause};`;
-    const countRes = await pool.query(countSql, values);
-    const total = Number(countRes.rows[0].total);
-
-    res.json({ items, total });
-  } catch (err) {
-    console.error('Erro ao consultar fila', err);
-    res.status(500).json({ error: 'Erro interno ao consultar fila' });
-  }
-});
-
-/** Remoção/Marcação manual a partir da Fila (usado pelos botões do front) */
-app.delete('/api/queue', async (req, res) => {
-  try {
-    const client = req.body?.client;
-    const phone = req.body?.phone;
-    const markSent = !!req.body?.markSent;
-
-    if (!client || !validateSlug(client) || !phone) {
-      return res.status(400).json({ error: 'Parâmetros inválidos' });
-    }
-
-    await pool.query(`DELETE FROM "${client}" WHERE phone = $1;`, [phone]);
-
-    let name = null;
-    if (markSent) {
-      await pool.query(
-        `UPDATE "${client}_totais" SET mensagem_enviada = true, updated_at = NOW() WHERE phone = $1;`,
-        [phone]
-      );
-      const nm = await pool.query(
-        `SELECT name FROM "${client}_totais" WHERE phone = $1 ORDER BY updated_at DESC LIMIT 1;`,
-        [phone]
-      );
-      name = nm.rows[0]?.name || null;
-    }
-
-    const evt = {
-      type: 'item',
-      name: name || '-',
-      phone,
-      ok: !!markSent,
-      status: markSent ? 'success' : 'skipped',
-      at: new Date().toISOString(),
-    };
-    snapshotPush(client, evt);
-    getEmitter(client).emit('progress', evt);
-
-    res.json({ ok: true });
-  } catch (err) {
-    console.error('Erro em DELETE /api/queue', err);
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-/** Históricos (pagina/filtra) — blindado para tabela ausente */
-app.get('/api/totals', async (req, res) => {
-  const slug = req.query.client;
-  if (!slug || !validateSlug(slug)) return res.status(400).json({ error: 'Cliente inválido' });
-
-  const totaisTable = `${slug}_totais`;
-  const exists = await tableExists(totaisTable);
-  if (!exists) return res.json({ items: [], total: 0 });
-
-  const page = parseInt(req.query.page) || 1;
-  const pageSize = parseInt(req.query.pageSize) || 25;
-  const search = req.query.search || '';
-  const sent = (req.query.sent || 'all').toLowerCase();
-  const offset = (page - 1) * pageSize;
-
-  const conditions = [];
-  const params = [];
-
-  if (search) {
-    params.push(`%${search}%`);
-    conditions.push(
-      `(name ILIKE $${params.length} OR phone ILIKE $${params.length} OR niche ILIKE $${params.length})`
-    );
-  }
-
-  if (sent !== 'all') {
-    if (sent === 'sim') conditions.push('mensagem_enviada = true');
-    else if (sent === 'nao') conditions.push('mensagem_enviada = false');
-  }
-
-  const whereClause = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
-
-  try {
-    const itemsSql = `
-      SELECT name, phone, niche, mensagem_enviada, updated_at
-        FROM "${totaisTable}"
-      ${whereClause}
-      ORDER BY updated_at DESC
-      LIMIT $${params.length + 1} OFFSET $${params.length + 2};
-    `;
-    const itemsRes = await pool.query(itemsSql, [...params, pageSize, offset]);
-    const items = itemsRes.rows;
-
-    const countSql = `SELECT COUNT(*) AS total FROM "${totaisTable}" ${whereClause};`;
-    const countRes = await pool.query(countSql, params);
-    const total = Number(countRes.rows[0].total);
-
-    res.json({ items, total });
-  } catch (err) {
-    console.error('Erro ao consultar totais', err);
-    res.status(500).json({ error: 'Erro interno ao consultar totais' });
-  }
-});
-
-/** Adiciona um contato individual */
-app.post('/api/contacts', async (req, res) => {
-  const { client, name, phone, niche } = req.body;
-  if (!client || !validateSlug(client)) return res.status(400).json({ error: 'Cliente inválido' });
-  if (!name || !phone) return res.status(400).json({ error: 'Nome e telefone são obrigatórios' });
-
-  try {
-    const result = await pool.query(
-      'SELECT client_add_contact($1, $2, $3, $4) AS status;',
-      [client, name, phone, niche || null]
-    );
-    const status = result.rows[0]?.status || 'inserted';
-    res.json({ status });
-  } catch (err) {
-    if (err.code === '23505') return res.json({ status: 'skipped_conflict' });
-    console.error('Erro ao adicionar contato', err);
-    res.status(500).json({ error: 'Erro interno ao adicionar contato' });
-  }
-});
-
-/** Importa CSV (arquivo + slug) */
-app.post('/api/import', upload.single('file'), async (req, res) => {
-  try {
-    const slug = req.body?.client;
-    if (!slug || !validateSlug(slug)) return res.status(400).json({ error: 'Cliente inválido' });
-    if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'Arquivo não enviado' });
-
-    const text = req.file.buffer.toString('utf8');
-    const firstLine = text.split(/\r?\n/)[0] || '';
-    const delim = detectDelimiter(firstLine);
-    const rows = parseCSV(text, delim);
-
-    if (!rows.length) return res.json({ inserted: 0, skipped: 0, errors: 0 });
-
-    const header = rows[0] || [];
-    const idx = mapHeader(header);
-    if (idx.name === -1 || idx.phone === -1) {
-      return res.status(400).json({ error: 'Cabeçalho inválido. Precisa conter colunas de nome e telefone.' });
-    }
-
-    let inserted = 0, skipped = 0, errors = 0;
-
-    for (let i = 1; i < rows.length; i++) {
-      const r = rows[i];
-      if (!r || !r.length) continue;
-
-      const name = (r[idx.name] || '').toString().trim();
-      const phone = (r[idx.phone] || '').toString().trim();
-      const niche = idx.niche !== -1 ? (r[idx.niche] || '').toString().trim() : null;
-
-      if (!name || !phone) { skipped++; continue; }
-
-      try {
-        const q = await pool.query('SELECT client_add_contact($1, $2, $3, $4) AS status;', [
-          slug, name, phone, niche,
-        ]);
-        const status = q.rows[0]?.status || 'inserted';
-        if (status === 'inserted') inserted++; else skipped++;
-      } catch (e) {
-        console.error('Erro linha CSV', i, e);
-        errors++;
-      }
-    }
-
-    res.json({ inserted, skipped, errors });
-  } catch (err) {
-    console.error('Erro no import CSV', err);
-    res.status(500).json({ error: 'Erro interno ao importar CSV' });
-  }
-});
-
-/** Lê configurações do cliente (inclui token/header/scheme) */
-app.get('/api/client-settings', async (req, res) => {
-  const slug = req.query.client;
-  if (!slug || !validateSlug(slug)) return res.status(400).json({ error: 'Cliente inválido' });
-
-  try {
-    const cfg = await getClientSettings(slug);
-    res.json({
-      autoRun: !!cfg.auto_run,
-      iaAuto: !!cfg.ia_auto,
-      instanceUrl: cfg.instance_url || null,
-      instanceToken: cfg.instance_token || '',
-      instanceAuthHeader: cfg.instance_auth_header || 'token',
-      instanceAuthScheme: cfg.instance_auth_scheme || '',
-      loopStatus: cfg.loop_status || 'idle',
-      lastRunAt: cfg.last_run_at || null,
-    });
-  } catch (err) {
-    console.error('Erro ao obter configurações', err);
-    res.status(500).json({ error: 'Erro interno' });
-  }
-});
-
-/** Salva configurações do cliente (inclui token/header/scheme) */
-app.post('/api/client-settings', async (req, res) => {
-  const {
-    client,
-    autoRun,
-    iaAuto,
-    instanceUrl,
-    instanceToken,
-    instanceAuthHeader,
-    instanceAuthScheme,
-  } = req.body || {};
-  if (!client || !validateSlug(client)) return res.status(400).json({ error: 'Cliente inválido' });
-
-  try {
-    if (instanceUrl) {
-      try { new URL(instanceUrl); }
-      catch { return res.status(400).json({ error: 'instanceUrl inválida' }); }
-    }
-
-    await saveClientSettings(client, {
-      autoRun,
-      iaAuto,
-      instanceUrl,
-      instanceToken,
-      instanceAuthHeader,
-      instanceAuthScheme,
-    });
-
-    const cfg = await getClientSettings(client);
-    res.json({ ok: true, settings: cfg });
-  } catch (err) {
-    console.error('Erro ao salvar configurações', err);
-    res.status(500).json({ error: 'Erro interno ao salvar configurações' });
-  }
-});
-
-/** Apaga completamente as tabelas e as configurações de um cliente */
-app.delete('/api/delete-client', async (req, res) => {
-  try {
-    const client = req.body?.client || req.query?.client;
-    if (!client || !validateSlug(client)) return res.status(400).json({ error: 'Cliente inválido' });
-
-    if (runningClients.has(client)) {
-      return res.status(409).json({ error: 'Loop em execução para este cliente. Tente novamente em instantes.' });
-    }
-
-    await pool.query('BEGIN');
-    await pool.query(`DROP TABLE IF EXISTS "${client}" CASCADE;`);
-    await pool.query(`DROP TABLE IF EXISTS "${client}_totais" CASCADE;`);
-    await pool.query(`DELETE FROM client_settings WHERE slug = $1;`, [client]);
-    await pool.query('COMMIT');
-
-    runningClients.delete(client);
-    res.json({ status: 'ok', deleted: client });
-  } catch (err) {
-    console.error('Erro ao apagar cliente', err);
-    try { await pool.query('ROLLBACK'); } catch {}
-    res.status(500).json({ error: 'Erro interno ao apagar cliente' });
-  }
-});
-
-/* ======================  >>> ADIÇÃO: Parada manual do loop  ====================== */
-const stopRequests = new Set();
-async function sleepAbortable(ms, slug) {
-  const step = 250;
-  let elapsed = 0;
-  while (elapsed < ms) {
-    if (stopRequests.has(slug)) return 'aborted';
-    const toWait = Math.min(step, ms - elapsed);
-    await new Promise((r) => setTimeout(r, toWait));
-    elapsed += toWait;
-  }
-  return 'ok';
-}
-
-app.post('/api/stop-loop', async (req, res) => {
-  const client = req.body?.client;
-  if (!client || !validateSlug(client)) {
-    return res.status(400).json({ ok: false, message: 'Cliente inválido' });
-  }
-  if (!runningClients.has(client)) {
-    return res.status(404).json({ ok: false, message: `Nenhum loop ativo para ${client}` });
-  }
-
-  stopRequests.add(client);
-  try {
-    await pool.query(`UPDATE client_settings SET loop_status='stopping', last_run_at=NOW() WHERE slug=$1`, [client]);
-  } catch {}
-
-  console.log(`[STOP] Parada solicitada para ${client}`);
-  return res.json({ ok: true, message: `Parada solicitada para ${client}` });
-});
-
-/* ======================  >>> ADIÇÃO: Buscar & salvar LEADS  ====================== */
-app.post('/api/leads', async (req, res) => {
-  try {
-    const { client, region, niche, limit } = req.body || {};
-    if (!client || !validateSlug(client)) {
-      return res.status(400).json({ error: 'Cliente inválido' });
-    }
-
-    await ensureRegionColumns(client);
-
-    const raw = await searchLeads({ region, niche, limit });
-    const results = Array.isArray(raw) ? raw : [];
-
-    let inserted = 0, skipped = 0, errors = 0;
-
-    for (const item of results) {
-      const name   = (item.name && String(item.name).trim()) || String(item.phone || '').trim();
-      const phone  = String(item.phone || '').trim();
-      const reg    = (item.region ?? region) || null;
-      const nich   = (item.niche  ?? niche ) || null;
-
-      if (!phone) { skipped++; continue; }
-
-      try {
-        const r = await pool.query(`SELECT client_add_lead($1,$2,$3,$4,$5) AS status;`,
-          [client, name, phone, reg, nich]);
-        const status = r.rows?.[0]?.status || 'inserted';
-        if (status === 'inserted' || status === 'queued_existing') inserted++;
-        else skipped++;
-      } catch (e) {
-        console.error('Erro ao inserir lead', client, phone, e);
-        errors++;
-      }
-    }
-
-    res.json({ found: results.length, inserted, skipped, errors });
-  } catch (err) {
-    console.error('Erro em /api/leads', err);
-    res.status(500).json({ error: 'Erro interno na busca de leads' });
-  }
-});
-
-/* ======================  >>> ADIÇÃO: Renomear cliente (SLUG)  ====================== */
-/**
- * POST /api/rename-client
- * Body: { oldSlug: string, newSlug: string }
- * - Renomeia as tabelas "<oldSlug>" -> "<newSlug>" e "<oldSlug>_totais" -> "<newSlug>_totais"
- * - Atualiza client_settings.slug
- * - Atualiza estruturas em memória (SSE, loop, stop flags)
- */
-app.post('/api/rename-client', async (req, res) => {
-  const oldSlug = req.body?.oldSlug;
-  const newSlug = req.body?.newSlug;
-
-  if (!validateSlug(oldSlug) || !validateSlug(newSlug)) {
-    return res.status(400).json({ error: 'Slugs inválidos. Use [a-z0-9_], 1..64 chars.' });
-  }
-  if (oldSlug === newSlug) {
-    return res.status(400).json({ error: 'oldSlug e newSlug são iguais.' });
-  }
-
-  try {
-    // Não permitir renomear se loop estiver rodando
-    if (runningClients.has(oldSlug)) {
-      return res.status(409).json({ error: `Loop em execução para ${oldSlug}. Pare antes de renomear.` });
-    }
-
-    const oldExists = await tableExists(oldSlug);
-    const oldTotExists = await tableExists(`${oldSlug}_totais`);
-    if (!oldExists || !oldTotExists) {
-      return res.status(404).json({ error: `Tabelas de ${oldSlug} não encontradas.` });
-    }
-
-    const newExists = await tableExists(newSlug);
-    const newTotExists = await tableExists(`${newSlug}_totais`);
-    if (newExists || newTotExists) {
-      return res.status(409).json({ error: `Já existem tabelas para ${newSlug}.` });
-    }
-
-    await pool.query('BEGIN');
-    await pool.query(`ALTER TABLE "${oldSlug}" RENAME TO "${newSlug}";`);
-    await pool.query(`ALTER TABLE "${oldSlug}_totais" RENAME TO "${newSlug}_totais";`);
-
-    // Atualizar client_settings
-    const cs = await pool.query(`SELECT 1 FROM client_settings WHERE slug = $1;`, [oldSlug]);
-    if (cs.rowCount) {
-      await pool.query(`UPDATE client_settings SET slug = $1 WHERE slug = $2;`, [newSlug, oldSlug]);
+    const s = await api(`/api/loop-state?client=${encodeURIComponent(state.selected)}`);
+    if (s.loop_status === 'running') {
+      btn.disabled = true;
+      btn.textContent = '▶️ Executando...';
     } else {
-      // se não existia, cria com defaults
-      await pool.query(
-        `INSERT INTO client_settings (slug, loop_status, last_run_at) VALUES ($1, 'idle', NOW());`,
-        [newSlug]
-      );
+      btn.disabled = false;
+      if ((s.remaining_today || 0) > 0) {
+        btn.textContent = `▶️ Continuar Loop (${s.remaining_today} restantes)`;
+      } else {
+        btn.textContent = '▶️ Executar Loop';
+      }
     }
-    await pool.query('COMMIT');
-
-    // Ajustar estruturas em memória (SSE, stop flags, running set)
-    if (progressEmitters.has(oldSlug)) {
-      progressEmitters.set(newSlug, progressEmitters.get(oldSlug));
-      progressEmitters.delete(oldSlug);
-    }
-    if (progressStates.has(oldSlug)) {
-      progressStates.set(newSlug, progressStates.get(oldSlug));
-      progressStates.delete(oldSlug);
-    }
-    // garantir que não há resíduos
-    stopRequests.delete(oldSlug);
-    runningClients.delete(oldSlug);
-
-    return res.json({ ok: true, oldSlug, newSlug });
-  } catch (err) {
-    console.error('Erro em /api/rename-client', err);
-    try { await pool.query('ROLLBACK'); } catch {}
-    return res.status(500).json({ error: 'Erro interno ao renomear cliente' });
+  } catch (e) {
+    // fallback de interface
+    btn.disabled = false;
+    btn.textContent = '▶️ Executar Loop';
   }
-});
+}
 
-/**
- * Endpoint para iniciar manualmente o loop de processamento de um cliente.
- * Espera body JSON: { client: 'cliente_x', iaAuto?: boolean }
- */
-app.post('/api/loop', async (req, res) => {
-  const clientSlug = req.body?.client;
-  const iaAutoOverride = req.body?.iaAuto;
-  if (!clientSlug || !validateSlug(clientSlug)) return res.status(400).json({ error: 'Cliente inválido' });
+// Tab navigation
+function activateTab(tab) {
+  $$(".tab-btn").forEach(b => b.classList.remove("active"));
+  $(`.tab-btn[data-tab="${tab}"]`)?.classList.add("active");
+  $$(".tab").forEach(s => s.classList.add("tab-hidden"));
+  $(`#tab-${tab}`)?.classList.remove("tab-hidden");
+}
 
+// Clients
+async function loadClients() {
   try {
-    const result = await runLoopForClient(clientSlug, { iaAutoOverride });
-    res.json({ message: 'Loop executado', processed: result.processed, status: result.status || 'ok' });
-  } catch (err) {
-    console.error('Erro ao executar loop manual', err);
-    res.status(500).json({ error: 'Erro interno ao executar loop' });
-  }
-});
+    const clients = await api("/api/clients");
+    state.clients = Array.isArray(clients) ? clients : [];
+    renderClientList();
+    if (!state.selected && state.clients.length) {
+      selectClient(state.clients[0].slug);
+    }
+  } catch {}
+}
 
-/** SSE de progresso por cliente (com replay do último estado) */
-app.get('/api/progress', (req, res) => {
-  try {
-    const client = req.query?.client;
-    if (!client || !validateSlug(client)) return res.status(400).json({ error: 'Cliente inválido' });
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no');
-
-    res.write(`event: ping\ndata: {}\n\n`);
-
-    try {
-      const st = progressStates.get(client);
-      if (st?.lastStart) res.write(`data: ${JSON.stringify(st.lastStart)}\n\n`);
-      if (st?.items?.length) for (const it of st.items) res.write(`data: ${JSON.stringify(it)}\n\n`);
-      if (st?.lastEnd) res.write(`data: ${JSON.stringify(st.lastEnd)}\n\n`);
-    } catch {}
-
-    const em = getEmitter(client);
-    const onProgress = (payload) => {
-      try { res.write(`data: ${JSON.stringify(payload)}\n\n`); } catch {}
-    };
-    em.on('progress', onProgress);
-
-    const ka = setInterval(() => {
-      try { res.write(`event: ping\ndata: {}\n\n`); } catch {}
-    }, 15000);
-
-    req.on('close', () => {
-      em.off('progress', onProgress);
-      clearInterval(ka);
-      try { res.end(); } catch {}
+function renderClientList() {
+  const ul = $("#clientList");
+  if (!ul) return;
+  const term = ($("#clientSearch")?.value || "").trim().toLowerCase();
+  const list = state.clients
+    .filter(c => c.slug.toLowerCase().includes(term))
+    .map(c => {
+      const li = document.createElement("li");
+      li.dataset.slug = c.slug;
+      li.className = (state.selected === c.slug ? "active" : "");
+      li.innerHTML = `<span>${c.slug}</span><span class="badge">${c.queueCount ?? 0}</span>`;
+      li.addEventListener("click", () => selectClient(c.slug));
+      return li;
     });
-  } catch {
-    try { res.end(); } catch {}
+  ul.innerHTML = "";
+  list.forEach(li => ul.appendChild(li));
+}
+
+async function createClient(slugRaw) {
+  try {
+    let slug = String(slugRaw || "").trim().toLowerCase();
+    if (!slug) return;
+    // validação: 1 a 64 caracteres, apenas letras minúsculas, números ou underline
+    const ok = /^[a-z0-9_]{1,64}$/.test(slug);
+    if (!ok) {
+      showToast("Use apenas minúsculas, números e _ (até 64 caracteres)", "warning");
+      return;
+    }
+    await api("/api/clients", { method: "POST", body: JSON.stringify({ slug }) });
+    showToast(`Cliente ${slug} criado`, "success");
+    await loadClients();
+    selectClient(slug);
+  } catch {}
+}
+
+async function selectClient(slug) {
+  state.selected = slug;
+  const title = $("#clientTitle");
+  if (title) title.textContent = slug || "—";
+  renderClientList();
+  await Promise.all([
+    loadStats(),
+    loadQueue(),
+    loadTotals(),
+    loadServerSettings()
+  ]);
+  // Atualiza o botão de loop conforme a cota/estado do dia
+  await refreshLoopCta();
+}
+
+// KPIs
+async function loadStats() {
+  if (!state.selected) return;
+  try {
+    const s = await api(`/api/stats?client=${encodeURIComponent(state.selected)}`);
+    state.kpis = {
+      totais: s.totais ?? 0,
+      enviados: s.enviados ?? 0,
+      fila: s.fila ?? 0,
+      pendentes: s.pendentes ?? Math.max((s.totais ?? 0) - (s.enviados ?? 0), 0),
+      last_sent_at: s.last_sent_at ?? null
+    };
+    renderKPIs();
+  } catch {}
+}
+function renderKPIs() {
+  $("#kpiTotais") && ($("#kpiTotais").textContent = state.kpis.totais || 0);
+  $("#kpiEnviados") && ($("#kpiEnviados").textContent = state.kpis.enviados || 0);
+  $("#kpiFila") && ($("#kpiFila").textContent = state.kpis.fila || 0);
+  $("#kpiLastSent") && ($("#kpiLastSent").textContent = state.kpis.last_sent_at
+    ? new Date(state.kpis.last_sent_at).toLocaleString("pt-BR")
+    : "—");
+}
+
+// Queue
+async function loadQueue() {
+  if (!state.selected) return;
+  const { page, pageSize, search } = state.queue;
+  const q = new URLSearchParams({ client: state.selected, page, pageSize, search });
+  try {
+    const res = await api(`/api/queue?${q}`);
+    const items = res.items || res || [];
+    state.queue.items = items;
+    state.queue.total = res.total ?? items.length ?? 0;
+    renderQueue();
+  } catch {}
+}
+
+function renderQueue() {
+  const wrap = $("#queueBody");
+  if (!wrap) return;
+  if (!state.queue.items.length) {
+    wrap.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/4">Nenhum contato na fila</div></div>`;
+  } else {
+    wrap.innerHTML = state.queue.items.map(item => {
+      const name = item.name || "-";
+      const phone = item.phone || "-";
+      return `
+        <div class="row">
+          <div>${name}</div>
+          <div>${phone}</div>
+          <div>
+            <button class="primary" data-phone="${phone}" data-name="${name}" data-act="mark">Marcar Enviado</button>
+            <button class="secondary" data-phone="${phone}" data-name="${name}" data-act="remove">Remover</button>
+          </div>
+        </div>`;
+    }).join("");
   }
-});
+  const totalPages = Math.max(1, Math.ceil((state.queue.total || 0) / state.queue.pageSize));
+  $("#queuePageInfo") && ($("#queuePageInfo").textContent = `Página ${state.queue.page} de ${totalPages} (${state.queue.total} itens)`);
+  $("#queuePrev") && ($("#queuePrev").disabled = state.queue.page <= 1);
+  $("#queueNext") && ($("#queueNext").disabled = state.queue.page >= totalPages);
 
-/* ======================  Loop de processamento por cliente  ====================== */
-async function runLoopForClient(clientSlug, opts = {}) {
-  if (!validateSlug(clientSlug)) throw new Error('Slug inválido');
-  if (runningClients.has(clientSlug)) return { processed: 0, status: 'already_running' };
+  wrap.querySelectorAll("button[data-act]").forEach(btn => {
+    btn.addEventListener("click", async () => {
+      const phone = btn.dataset.phone; const name = btn.dataset.name;
+      const act = btn.dataset.act;
+      if (act === "mark") {
+        await markAsSent(phone, name);
+      } else if (act === "remove") {
+        await removeFromQueue(phone);
+      }
+    });
+  });
+}
 
-  runningClients.add(clientSlug);
-  const batchSize = parseInt(process.env.LOOP_BATCH_SIZE, 10) || opts.batchSize || DAILY_MESSAGE_COUNT;
+async function markAsSent(phone, name="") {
+  if (!state.selected || !phone) return;
+  try {
+    await api("/api/queue", {
+      method: "DELETE",
+      body: JSON.stringify({ client: state.selected, phone, markSent: true })
+    });
+    showToast("Contato marcado como enviado", "success");
+    await Promise.all([loadQueue(), loadTotals(), loadStats(), loadClients()]);
+  } catch {}
+}
+
+async function removeFromQueue(phone) {
+  if (!state.selected || !phone) return;
+  try {
+    await api("/api/queue", {
+      method: "DELETE",
+      body: JSON.stringify({ client: state.selected, phone, markSent: false })
+    });
+    showToast("Contato removido da fila", "success");
+    await Promise.all([loadQueue(), loadStats(), loadClients()]);
+  } catch {}
+}
+
+// Totals
+async function loadTotals() {
+  if (!state.selected) return;
+  const { page, pageSize, search, sent } = state.totals;
+  const q = new URLSearchParams({ client: state.selected, page, pageSize, search, sent });
+  try {
+    const res = await api(`/api/totals?${q}`);
+    const items = res.items || res || [];
+    state.totals.items = items;
+    state.totals.total = res.total ?? items.length ?? 0;
+    renderTotals();
+  } catch {}
+}
+
+function renderTotals() {
+  const wrap = $("#totalsBody");
+  if (!wrap) return;
+  if (!state.totals.items.length) {
+    wrap.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/6">Nenhum registro encontrado</div></div>`;
+  } else {
+    wrap.innerHTML = state.totals.items.map(item => {
+      const name = item.name || "-";
+      const phone = item.phone || "-";
+      const niche = item.niche || "-";
+      const sent = !!item.mensagem_enviada;
+      const updated = item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "-";
+      const badge = `<span class="status ${sent ? "success" : "skipped"}">${sent ? "Enviado" : "Pendente"}</span>`;
+      return `
+        <div class="row" style="grid-template-columns: 1.5fr 1.2fr 1fr .8fr 1.2fr">
+          <div>${name}</div>
+          <div>${phone}</div>
+          <div>${niche}</div>
+          <div>${badge}</div>
+          <div>${updated}</div>
+        </div>`;
+    }).join("");
+  }
+  const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize));
+  $("#totalsPageInfo") && ($("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`);
+  $("#totalsPrev") && ($("#totalsPrev").disabled = state.totals.page <= 1);
+  $("#totalsNext") && ($("#totalsNext").disabled = state.totals.page >= totalPages);
+}
+
+// Contatos / CSV
+async function addContact() {
+  if (!state.selected) return;
+  const name  = ($("#addName")?.value || "").trim();
+  const phone = ($("#addPhone")?.value || "").trim();
+  const niche = ($("#addNiche")?.value || "").trim();
+  if (!name || !phone) { showToast("Informe nome e telefone", "warning"); return; }
+  try {
+    const r = await api("/api/contacts", {
+      method: "POST",
+      body: JSON.stringify({ client: state.selected, name, phone, niche: niche || null })
+    });
+    const msg = r.status === "inserted" ? "Contato adicionado" :
+                r.status === "skipped_conflict" ? "Telefone já existe" :
+                r.status === "skipped_already_known" ? "Já presente no histórico" : "Processado";
+    showToast(msg, r.status === "inserted" ? "success" : "warning");
+    if ($("#addName"))  $("#addName").value  = "";
+    if ($("#addPhone")) $("#addPhone").value = "";
+    if ($("#addNiche")) $("#addNiche").value = "";
+    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
+  } catch {}
+}
+
+async function importCSV(file) {
+  if (!state.selected || !file) return;
+  showLoading();
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    fd.append("client", state.selected);
+    const res = await fetch(`${API_BASE_URL}/api/import`, { method: "POST", body: fd });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const result = await res.json();
+    if ($("#csvResult")) {
+      $("#csvResult").textContent =
+        `Inseridos: ${result.inserted || 0} | Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
+    }
+    showToast("Importação concluída", "success");
+    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
+  } catch (e) {
+    showToast(`Erro na importação`, "error");
+  } finally { hideLoading(); }
+}
+
+// Config
+async function loadServerSettings() {
+  if (!state.selected) return;
+  try {
+    const s = await api(`/api/client-settings?client=${encodeURIComponent(state.selected)}`);
+    state.settings = {
+      autoRun: !!s.autoRun,
+      iaAuto: !!s.iaAuto,
+      instanceUrl: s.instanceUrl || "",
+      instanceToken: s.instanceToken || "",
+      instanceAuthHeader: s.instanceAuthHeader || "token",
+      instanceAuthScheme: s.instanceAuthScheme || ""
+    };
+  } catch {
+    state.settings = { autoRun:false, iaAuto:false, instanceUrl:"", instanceToken:"", instanceAuthHeader:"token", instanceAuthScheme:"" };
+  }
+  $("#cfgAutoRun") && ($("#cfgAutoRun").checked = !!state.settings.autoRun);
+  $("#cfgIaAuto") && ($("#cfgIaAuto").checked = !!state.settings.iaAuto);
+  $("#cfgInstanceUrl") && ($("#cfgInstanceUrl").value = state.settings.instanceUrl || "");
+  $("#cfgAuthHeader") && ($("#cfgAuthHeader").value = state.settings.instanceAuthHeader || "token");
+  $("#cfgToken") && ($("#cfgToken").value = state.settings.instanceToken || "");
+  $("#cfgAuthScheme") && ($("#cfgAuthScheme").value = state.settings.instanceAuthScheme || "");
+  $("#cfgMeta") && ($("#cfgMeta").textContent = "");
+}
+
+async function saveServerSettings() {
+  if (!state.selected) return;
+  const payload = {
+    client: state.selected,
+    autoRun: $("#cfgAutoRun")?.checked || false,
+    iaAuto: $("#cfgIaAuto")?.checked || false,
+    instanceUrl: normalizeInstanceUrl(($("#cfgInstanceUrl")?.value || "")),
+    instanceToken: ($("#cfgToken")?.value || "").trim(),
+    instanceAuthHeader: ($("#cfgAuthHeader")?.value || "token").trim() || "token",
+    instanceAuthScheme: ($("#cfgAuthScheme")?.value || "").trim()
+  };
+  try {
+    await api("/api/client-settings", { method: "POST", body: JSON.stringify(payload) });
+    showToast("Configurações salvas", "success");
+  } catch {}
+}
+
+/* runLoop: dispara o loop via backend sem travar a UI */
+async function runLoop() {
+  if (!state.selected) return;
+  const iaAuto = $("#cfgIaAuto")?.checked || false;
+  postJsonNoWait("/api/loop", { client: state.selected, iaAuto });
+  showToast(`Loop solicitado para ${state.selected}`, "success");
+  Promise.allSettled([ loadStats(), loadQueue(), loadTotals(), loadClients() ]);
+  // Atualiza CTA após disparar loop
+  await refreshLoopCta();
+}
+
+/* >>> ADIÇÃO: parar o loop atual via /api/stop-loop */
+async function stopLoop() {
+  if (!state.selected) return;
+  try {
+    await fetch(`${API_BASE_URL}/api/stop-loop`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ client: state.selected })
+    });
+    showToast("Parada do loop solicitada", "warning");
+    // Atualiza indicadores rapidamente
+    Promise.allSettled([ loadStats(), loadServerSettings() ]);
+  } catch (e) {
+    console.error(e);
+    showToast("Falha ao solicitar parada do loop", "error");
+  } finally {
+    // Atualiza CTA após a tentativa de parada
+    await refreshLoopCta();
+  }
+}
+
+/* >>> ADIÇÃO: Buscar & Salvar Leads (com trava de concorrência) */
+async function searchLeadsAndSave() {
+  if (!state.selected) { showToast("Selecione um cliente", "warning"); return; }
+
+  const btn   = $("#btnLeadsSearch");
+  const region = ($("#leadRegion")?.value || "").trim();
+  const niche  = ($("#leadNiche")?.value || "").trim();
+  const limit  = parseInt($("#leadLimit")?.value || "100", 10);
+
+  if (!region && !niche) {
+    showToast("Informe pelo menos Região ou Nicho", "warning");
+    return;
+  }
+
+  if (leadsBusy) {
+    showToast("Uma busca já está em execução… aguarde terminar.", "warning");
+    return;
+  }
+
+  // marca como ocupado e desabilita o botão
+  leadsBusy = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.dataset.prevText = btn.textContent;
+    btn.textContent = "⏳ Buscando…";
+  }
+
+  // prévia no UI
+  $("#leadsResult") && ($("#leadsResult").textContent = `Buscando: região="${region}", nicho="${niche}", limite=${limit}`);
 
   try {
-    await pool.query(
-      `INSERT INTO client_settings (slug, loop_status, last_run_at)
-       VALUES ($1, 'running', NOW())
-       ON CONFLICT (slug) DO UPDATE SET loop_status = 'running', last_run_at = NOW()`,
-      [clientSlug]
-    );
-
-    const exists = await tableExists(clientSlug);
-    if (!exists) {
-      await pool.query(
-        `INSERT INTO client_settings (slug, loop_status, last_run_at)
-         VALUES ($1, 'idle', NOW())
-         ON CONFLICT (slug) DO UPDATE SET loop_status = 'idle', last_run_at = NOW()`,
-        [clientSlug]
-      );
-      return { processed: 0, status: 'ok' };
-    }
-
-    // total na fila
-    let totalCount = 0;
-    try {
-      const _cnt = await pool.query(`SELECT COUNT(*) AS count FROM "${clientSlug}";`);
-      totalCount = Number(_cnt.rows?.[0]?.count || 0);
-    } catch {}
-
-    // Snapshot de início para SSE
-    try {
-      snapshotStart(clientSlug, totalCount);
-      getEmitter(clientSlug).emit('progress', { type: 'start', total: totalCount, at: new Date().toISOString() });
-    } catch {}
-
-    const settings = await getClientSettings(clientSlug);
-    let processed = 0;
-    let manualStop = false;
-    const useIA = typeof opts.iaAutoOverride === 'boolean' ? opts.iaAutoOverride : !!settings.ia_auto;
-
-    // Cota diária: contar enviados hoje
-    let alreadySentToday = 0;
-    try {
-      const sentTodayRes = await pool.query(
-        `SELECT COUNT(*)::int AS c
-           FROM "${clientSlug}_totais"
-          WHERE mensagem_enviada = true
-            AND updated_at::date = CURRENT_DATE;`
-      );
-      alreadySentToday = Number(sentTodayRes.rows?.[0]?.c || 0);
-      console.log(`[${clientSlug}] Enviadas hoje: ${alreadySentToday}/${DAILY_MESSAGE_COUNT}`);
-    } catch (e) {
-      console.warn(`[${clientSlug}] Falha ao contar envios de hoje`, e);
-    }
-
-    if (stopRequests.has(clientSlug)) {
-      manualStop = true;
-    }
-
-    const remainingToday = Math.max(0, DAILY_MESSAGE_COUNT - alreadySentToday);
-    if (!manualStop && remainingToday <= 0) {
-      console.log(`[${clientSlug}] Cota diária (${DAILY_MESSAGE_COUNT}) atingida. Encerrando.`);
-      try {
-        snapshotEnd(clientSlug, processed, { reason: 'daily_quota' });
-        getEmitter(clientSlug).emit('progress', { type: 'end', processed, at: new Date().toISOString(), reason: 'daily_quota' });
-      } catch {}
-      await pool.query(`UPDATE client_settings SET loop_status='idle', last_run_at=NOW() WHERE slug=$1;`, [clientSlug]);
-      return { processed, status: 'quota_reached' };
-    }
-
-    const scheduleDelays = generateScheduleDelays(DAILY_MESSAGE_COUNT, DAILY_START_TIME, DAILY_END_TIME);
-    const messageLimit = Math.min(batchSize, scheduleDelays.length);
-
-    const planCount = Math.min(messageLimit, remainingToday);
-    if (!manualStop) {
-      try {
-        let acc = 0;
-        const planned = [];
-        for (let i = 0; i < planCount; i++) {
-          acc += scheduleDelays[i];
-          planned.push(new Date(Date.now() + acc * 1000).toISOString());
-        }
-        getEmitter(clientSlug).emit('progress', { type: 'schedule', planned, remainingToday, cap: DAILY_MESSAGE_COUNT });
-      } catch {}
-    }
-
-    const attemptedPhones = new Set();
-
-    for (let i = 0; i < messageLimit; i++) {
-      if (stopRequests.has(clientSlug)) { manualStop = true; break; }
-      if (i >= remainingToday) {
-        console.log(`[${clientSlug}] Cota diária atingida durante o ciclo. Encerrando.`);
-        break;
-      }
-
-      const delaySec = scheduleDelays[i];
-      if (delaySec > 0) {
-        const when = new Date(Date.now() + delaySec * 1000);
-        console.log(
-          `[${clientSlug}] Aguardando ${delaySec}s (${when.toTimeString().split(' ')[0]}) para enviar a mensagem ${i + 1}/${messageLimit}.`
-        );
-        const slept = await sleepAbortable(delaySec * 1000, clientSlug);
-        if (slept === 'aborted') { manualStop = true; break; }
-      }
-
-      if (stopRequests.has(clientSlug)) { manualStop = true; break; }
-
-      let whereNotIn = '';
-      let params = [];
-      if (attemptedPhones.size) {
-        const arr = Array.from(attemptedPhones);
-        const ph = arr.map((_, idx) => `$${idx + 1}`).join(',');
-        whereNotIn = `WHERE phone NOT IN (${ph})`;
-        params = arr;
-      }
-
-      const next = await pool.query(
-        `SELECT name, phone FROM "${clientSlug}" ${whereNotIn} ORDER BY name LIMIT 1;`,
-        params
-      );
-      if (next.rows.length === 0) break;
-
-      const { name, phone } = next.rows[0];
-      attemptedPhones.add(phone);
-
-      let sendRes = null;
-      let status = 'skipped';
-      let shouldMark = false;
-
-      if (!manualStop) {
-        if (useIA) {
-          sendRes = await runIAForContact({
-            client: clientSlug,
-            name,
-            phone,
-            instanceUrl: settings.instance_url,
-            instanceToken: settings.instance_token,
-            instanceAuthHeader: settings.instance_auth_header,
-            instanceAuthScheme: settings.instance_auth_scheme,
-          });
-          status = sendRes && sendRes.ok ? 'success' : 'error';
-          shouldMark = status === 'success';
-        } else {
-          status = 'skipped';
-          shouldMark = false;
-        }
-      }
-
-      if (stopRequests.has(clientSlug)) { manualStop = true; }
-
-      if (shouldMark && !manualStop) {
-        try {
-          await pool.query(`DELETE FROM "${clientSlug}" WHERE phone = $1;`, [phone]);
-        } catch (err) {
-          console.error('Erro ao deletar da fila', clientSlug, phone, err);
-        }
-        try {
-          await pool.query(
-            `UPDATE "${clientSlug}_totais" SET mensagem_enviada = true, updated_at = NOW() WHERE phone = $1;`,
-            [phone]
-          );
-        } catch (err) {
-          console.error('Erro ao atualizar histórico', clientSlug, phone, err);
-        }
-        processed++;
-      } else if (!manualStop) {
-        console.warn(`[${clientSlug}] NÃO marcou como enviada (${status}). Mantendo na fila: ${phone}`);
-      }
-
-      try {
-        const evt = {
-          type: 'item',
-          name,
-          phone,
-          ok: shouldMark && !manualStop,
-          status: manualStop ? 'stopped' : status,
-          at: new Date().toISOString(),
-        };
-        snapshotPush(clientSlug, evt);
-        getEmitter(clientSlug).emit('progress', evt);
-      } catch {}
-
-      if (manualStop) break;
-    }
-
-    await pool.query(
-      `INSERT INTO client_settings (slug, loop_status, last_run_at)
-       VALUES ($1, 'idle', NOW())
-       ON CONFLICT (slug) DO UPDATE SET loop_status = 'idle', last_run_at = NOW()`,
-      [clientSlug]
-    );
-
-    try {
-      snapshotEnd(clientSlug, processed, manualStop ? { reason: 'manual_stop' } : {});
-      getEmitter(clientSlug).emit('progress', {
-        type: 'end',
-        processed,
-        at: new Date().toISOString(),
-        ...(manualStop ? { reason: 'manual_stop' } : {})
-      });
-    } catch {}
-
-    if (manualStop) {
-      console.log(`[${clientSlug}] Loop encerrado manualmente.`);
-    }
-
-    return { processed, status: manualStop ? 'stopped' : 'ok' };
-  } catch (err) {
-    console.error('Erro no runLoopForClient', clientSlug, err);
-    return { processed: 0, status: 'error' };
+    const result = await api("/api/leads", {
+      method: "POST",
+      body: JSON.stringify({ client: state.selected, region, niche, limit })
+    });
+    const msg = `Encontrados: ${result.found || 0} | Inseridos: ${result.inserted || 0} | Duplicados/Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
+    $("#leadsResult") && ($("#leadsResult").textContent = msg);
+    showToast(`Leads adicionados: ${result.inserted || 0}`, "success");
+    await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients()]);
+  } catch (e) {
+    // api() já trata toasts
   } finally {
-    stopRequests.delete(clientSlug);
-    runningClients.delete(clientSlug);
+    leadsBusy = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = btn.dataset.prevText || "🔎 Buscar & Salvar";
+      delete btn.dataset.prevText;
+    }
   }
 }
 
-/* =====================  Scheduler: Auto-run diário  ===================== */
-function scheduleDailyAutoRun() {
-  const now = new Date();
-  const nextRun = new Date(now);
-  nextRun.setHours(8, 0, 0, 0);
-  if (now >= nextRun) nextRun.setDate(nextRun.getDate() + 1);
-  const msUntilNext = nextRun.getTime() - now.getTime();
-
-  setTimeout(async () => {
-    try {
-      const { rows } = await pool.query(`SELECT slug FROM client_settings WHERE auto_run = true;`);
-      for (const { slug } of rows) {
-        try {
-          if (runningClients.has(slug)) continue;
-          const exists = await tableExists(slug);
-          if (!exists) continue;
-          const cnt = await pool.query(`SELECT COUNT(*) AS count FROM "${slug}";`);
-          const queueCount = Number(cnt.rows[0].count);
-          if (queueCount > 0) {
-            runLoopForClient(slug).catch((e) => console.error('Auto-run erro', slug, e));
-          }
-        } catch (err) {
-          console.error('Erro ao executar loop automático para', slug, err);
-        }
-      }
-    } catch (err) {
-      console.error('Erro no scheduler de loop automático', err);
-    } finally {
-      scheduleDailyAutoRun();
+// Remover cliente
+async function deleteClient() {
+  const slug = state.selected;
+  if (!slug) { showToast("Nenhum cliente selecionado.", "warning"); return; }
+  const confirm1 = window.confirm(`Tem certeza que deseja APAGAR as tabelas e dados do cliente "${slug}"?\n\nEsta ação NÃO pode ser desfeita.`);
+  if (!confirm1) return;
+  const typed = window.prompt(`Para confirmar, digite o slug do cliente exatamente como abaixo:\n\n${slug}`);
+  if (typed !== slug) { showToast("Confirmação cancelada.", "warning"); return; }
+  try {
+    await api("/api/delete-client", { method: "DELETE", body: JSON.stringify({ client: slug }) });
+    showToast(`Tabelas de ${slug} apagadas com sucesso`, "success");
+    await loadClients();
+    if (state.clients.length > 0) selectClient(state.clients[0].slug);
+    else {
+      state.selected = null;
+      const title = $("#clientTitle"); if (title) title.textContent = "—";
+      const qb = $("#queueBody");  if (qb)  qb.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/4">Nenhum contato na fila</div></div>`;
+      const tb = $("#totalsBody"); if (tb) tb.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/6">Nenhum registro encontrado</div></div>`;
+      $("#kpiTotais")  && ($("#kpiTotais").textContent = 0);
+      $("#kpiEnviados")&& ($("#kpiEnviados").textContent = 0);
+      $("#kpiFila")    && ($("#kpiFila").textContent = 0);
+      $("#kpiLastSent")&& ($("#kpiLastSent").textContent = "—");
     }
-  }, msUntilNext);
+  } catch (err) {
+    console.error(err);
+    showToast("Erro ao excluir tabelas", "error");
+  }
 }
-scheduleDailyAutoRun();
 
-/* =====================  Catch-all  ===================== */
-app.get('*', (_req, res) => res.status(404).json({ error: 'Not found' }));
+// Eventos iniciais
+document.addEventListener("DOMContentLoaded", () => {
+  $$(".tab-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const tab = btn.dataset.tab;
+      activateTab(tab);
+    });
+  });
+  activateTab("queue");
 
-/* =====================  Boot  ===================== */
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Servidor rodando na porta ${PORT}`);
+  $("#clientSearch") && $("#clientSearch").addEventListener("input", renderClientList);
+  $("#btnCreateClient") && $("#btnCreateClient").addEventListener("click", () => createClient($("#newClientInput").value));
+
+  $("#queueSearch") && $("#queueSearch").addEventListener("input", (e) => {
+    state.queue.search = e.target.value; state.queue.page = 1; loadQueue();
+  });
+  $("#queuePrev") && $("#queuePrev").addEventListener("click", () => { if (state.queue.page > 1) { state.queue.page--; loadQueue(); } });
+  $("#queueNext") && $("#queueNext").addEventListener("click", () => {
+    const totalPages = Math.max(1, Math.ceil((state.queue.total || 0) / state.queue.pageSize));
+    if (state.queue.page < totalPages) { state.queue.page++; loadQueue(); }
+  });
+
+  $("#totalsSearch") && $("#totalsSearch").addEventListener("input", (e) => {
+    state.totals.search = e.target.value; state.totals.page = 1; loadTotals();
+  });
+  $("#totalsFilter") && $("#totalsFilter").addEventListener("change", (e) => {
+    state.totals.sent = e.target.value; state.totals.page = 1; loadTotals();
+  });
+  $("#totalsPrev") && $("#totalsPrev").addEventListener("click", () => { if (state.totals.page > 1) { state.totals.page--; loadTotals(); } });
+  $("#totalsNext") && $("#totalsNext").addEventListener("click", () => {
+    const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize));
+    if (state.totals.page < totalPages) { state.totals.page++; loadTotals(); }
+  });
+
+  $("#btnAddContact") && $("#btnAddContact").addEventListener("click", addContact);
+
+  $("#csvForm") && $("#csvForm").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const file = $("#csvFile")?.files?.[0];
+    if (!file) { showToast("Selecione um CSV", "warning"); return; }
+    importCSV(file);
+  });
+
+  $("#btnSaveConfig") && $("#btnSaveConfig").addEventListener("click", saveServerSettings);
+  $("#btnRunLoop") && $("#btnRunLoop").addEventListener("click", runLoop);
+  /* >>> listener do botão Parar Loop + preventDefault */
+  $("#btnStopLoop") && $("#btnStopLoop").addEventListener("click", (e) => { e.preventDefault(); stopLoop(); });
+
+  /* >>> listener do Buscar & Salvar Leads */
+  $("#btnLeadsSearch") && $("#btnLeadsSearch").addEventListener("click", searchLeadsAndSave);
+
+  const cfgRow = $("#btnSaveConfig")?.parentElement;
+  if (cfgRow && !$("#btnDeleteClient")) {
+    const btnDel = document.createElement("button");
+    btnDel.id = "btnDeleteClient";
+    btnDel.title = "Apagar tabelas e dados deste cliente";
+    btnDel.textContent = "🗑️ Apagar Tabela";
+    btnDel.className = "secondary";
+    btnDel.style.marginLeft = "8px";
+    btnDel.style.background = "var(--danger)";
+    btnDel.style.color = "#fff";
+    btnDel.addEventListener("click", deleteClient);
+    cfgRow.appendChild(btnDel);
+  }
+
+  $("#btnRefreshAll") && $("#btnRefreshAll").addEventListener("click", async () => {
+    await loadClients();
+    if (state.selected) {
+      await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings()]);
+    }
+  });
+
+  loadClients();
 });
