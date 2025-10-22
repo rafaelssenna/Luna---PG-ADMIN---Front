@@ -36,7 +36,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px 0 20px;
+  padding: 0 16px 0 08px;
   background: var(--card);
   border-bottom: 1px solid var(--card-border);
   box-shadow: var(--shadow);
@@ -201,7 +201,7 @@ button.secondary:hover, .secondary:hover { background: var(--secondary-hover); }
 }
 
 .brand-logo {
-  height: 200px;                 /* ajuste fino: 28–36px */
+  height: 28px;                 /* ajuste fino: 28–36px */
   width: auto;
   display: block;
   image-rendering: -webkit-optimize-contrast;
