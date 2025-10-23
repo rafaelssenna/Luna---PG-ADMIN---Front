@@ -1,26 +1,28 @@
 /* Complete design overhaul for professional appearance */
 
-/* Refined color system with better contrast and cohesion */
+/* Green theme color system with better contrast and cohesion */
 :root {
-  --bg-start: #0a0e1a;
-  --bg-end: #0f1419;
-  --surface: #151b28;
-  --surface-elevated: #1a2332;
-  --card: #1a2332;
-  --card-hover: #1f2937;
-  --card-border: #2d3748;
+  --bg-start: #0a1410;
+  --bg-end: #0f1914;
+  --surface: #151f1b;
+  --surface-elevated: #1a2823;
+  --card: #1a2823;
+  --card-hover: #1f2f28;
+  --card-border: #2d4038;
   --text: #f8fafc;
-  --text-secondary: #cbd5e1;
-  --muted: #94a3b8;
-  --accent: #3b82f6;
-  --accent-hover: #2563eb;
-  --accent-light: rgba(59, 130, 246, 0.1);
+  --text-secondary: #d1e5db;
+  --muted: #94b3a8;
+  --accent: #10b981;
+  --accent-hover: #059669;
+  --accent-light: rgba(16, 185, 129, 0.1);
   --success: #10b981;
+  --success-hover: #059669;
   --success-light: rgba(16, 185, 129, 0.1);
   --danger: #ef4444;
   --danger-hover: #dc2626;
   --danger-light: rgba(239, 68, 68, 0.1);
   --warning: #f59e0b;
+  --warning-hover: #d97706;
   --warning-light: rgba(245, 158, 11, 0.1);
   --secondary: #64748b;
   --secondary-hover: #475569;
@@ -84,12 +86,14 @@ body {
   height: 42px;
   width: auto;
   display: block;
-  filter: drop-shadow(0 2px 8px rgba(59, 130, 246, 0.3));
+  /* Updated filter for green theme */
+  filter: drop-shadow(0 2px 8px rgba(16, 185, 129, 0.3));
   transition: var(--transition);
 }
 
 .brand:hover .brand-logo {
-  filter: drop-shadow(0 4px 12px rgba(59, 130, 246, 0.5));
+  /* Updated hover filter for green theme */
+  filter: drop-shadow(0 4px 12px rgba(16, 185, 129, 0.5));
   transform: translateY(-1px);
 }
 
@@ -361,7 +365,8 @@ button.secondary:hover,
   left: 0;
   right: 0;
   height: 3px;
-  background: linear-gradient(90deg, var(--accent), var(--success));
+  /* Updated gradient for green theme */
+  background: linear-gradient(90deg, var(--accent), #34d399);
   opacity: 0;
   transition: var(--transition);
 }
@@ -680,9 +685,11 @@ button.secondary:hover,
 .quota-fill {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, var(--accent), var(--success));
+  /* Updated gradient for green theme */
+  background: linear-gradient(90deg, var(--accent), #34d399);
   transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: 0 0 10px rgba(59, 130, 246, 0.5);
+  /* Updated glow for green theme */
+  box-shadow: 0 0 10px rgba(16, 185, 129, 0.5);
 }
 
 .quota-legend {
@@ -998,4 +1005,81 @@ button.secondary:hover,
   .brand-logo {
     height: 48px;
   }
+}
+
+/* Added specific button styles for Config tab actions */
+.config-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.btn-success {
+  background: var(--success);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  padding: 12px 20px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-success:hover {
+  background: var(--success-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.btn-success:active {
+  transform: translateY(0);
+}
+
+.btn-warning {
+  background: var(--warning);
+  color: #1a2823;
+  border: none;
+  border-radius: var(--radius);
+  padding: 12px 20px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn-warning:hover {
+  background: var(--warning-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.btn-warning:active {
+  transform: translateY(0);
+}
+
+.btn-danger {
+  background: var(--danger);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  padding: 12px 20px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
+  width: 100%;
+}
+
+.btn-danger:hover {
+  background: var(--danger-hover);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+}
+
+.btn-danger:active {
+  transform: translateY(0);
 }
