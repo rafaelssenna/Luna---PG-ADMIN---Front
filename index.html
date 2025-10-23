@@ -117,12 +117,11 @@
       <nav class="tabs">
         <button id="tabButtonQueue"    class="tab-btn active" data-tab="queue">Fila</button>
         <button id="tabButtonTotals"   class="tab-btn" data-tab="totals">Totais</button>
+        <button id="tabButtonLeads"    class="tab-btn" data-tab="leads">Leads</button>
         <button id="tabButtonAdd"      class="tab-btn" data-tab="add">Adicionar Contato</button>
         <button id="tabButtonImport"   class="tab-btn" data-tab="import">Importar CSV</button>
-        <button id="tabButtonConfig"   class="tab-btn" data-tab="config">Config</button>
         <button id="tabButtonProgress" class="tab-btn" data-tab="progress">Progresso</button>
-        <!-- >>> ADIÇÃO: nova aba -->
-        <button id="tabButtonLeads"    class="tab-btn" data-tab="leads">Leads</button>
+        <button id="tabButtonConfig"   class="tab-btn" data-tab="config">Config</button>
       </nav>
 
       <!-- TAB: FILA -->
@@ -234,7 +233,6 @@
             <input id="cfgAuthScheme" type="text" placeholder="(em branco para UAZAPI)" />
           </div>
 
-          <!-- >>> CAMPO NOVO: Limite diário por cliente -->
           <div class="form-row">
             <label>Limite diário por cliente</label>
             <input id="cfgDailyLimit" type="number" min="1" max="10000" placeholder="30" />
@@ -243,9 +241,15 @@
 
           <div class="form-row">
             <button id="btnSaveConfig" class="primary" type="button">💾 Salvar</button>
-            <button id="btnRunLoop"   class="secondary" type="button">▶️ Executar Loop</button>
-            <!-- ADIÇÃO: type="button" para evitar submit -->
-            <button id="btnStopLoop"  class="secondary" type="button" style="background: var(--warning); color: #000;">🛑 Parar Loop</button>
+          </div>
+          
+          <div class="form-row config-actions">
+            <button id="btnRunLoop" class="btn-success" type="button">▶️ Continuar Loop</button>
+            <button id="btnStopLoop" class="btn-warning" type="button">🛑 Parar Loop</button>
+          </div>
+          
+          <div class="form-row">
+            <button id="btnClearTable" class="btn-danger" type="button">🗑️ Apagar Tabela</button>
           </div>
 
           <div id="cfgMeta" class="muted"></div>
@@ -288,7 +292,7 @@
         </div>
       </section>
 
-      <!-- >>> ADIÇÃO: TAB LEADS -->
+      <!-- TAB: LEADS -->
       <section id="tab-leads" class="tab tab-hidden">
         <div class="form">
           <div class="form-row">
