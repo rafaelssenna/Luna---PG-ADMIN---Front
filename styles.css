@@ -1035,46 +1035,31 @@ button.secondary:hover,
   gap: 12px;
 }
 
-/* Beautiful success button with gradient and glow effects */
+/* Clean, professional button styles for config section */
+
+/* Success button - emerald green */
 .btn-success {
-  background: linear-gradient(135deg, var(--success) 0%, #059669 100%);
+  background: linear-gradient(180deg, #10b981 0%, #059669 100%);
   color: white;
   border: none;
   border-radius: var(--radius);
-  padding: 14px 24px;
+  padding: 16px 24px;
   cursor: pointer;
   font-weight: 600;
-  font-size: 14px;
-  transition: var(--transition);
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.25), 0 2px 4px rgba(0, 0, 0, 0.1);
-  position: relative;
-  overflow: hidden;
-}
-
-.btn-success::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left 0.5s ease;
-}
-
-.btn-success:hover::before {
-  left: 100%;
+  font-size: 15px;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.25);
 }
 
 .btn-success:hover {
-  background: linear-gradient(135deg, #059669 0%, #047857 100%);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.4), 0 4px 8px rgba(0, 0, 0, 0.15);
+  background: linear-gradient(180deg, #059669 0%, #047857 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
 }
 
 .btn-success:active {
   transform: translateY(0);
-  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3), 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 4px rgba(16, 185, 129, 0.2);
 }
 
 .btn-success:focus-visible {
@@ -1082,52 +1067,29 @@ button.secondary:hover,
   outline-offset: 2px;
 }
 
-.btn-success:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-  transform: none;
-}
-
-/* Beautiful warning button with gradient and glow effects */
+/* Warning button - orange */
 .btn-warning {
-  background: linear-gradient(135deg, var(--warning) 0%, #d97706 100%);
+  background: linear-gradient(180deg, #f59e0b 0%, #d97706 100%);
   color: #1a2823;
   border: none;
   border-radius: var(--radius);
-  padding: 14px 24px;
+  padding: 16px 24px;
   cursor: pointer;
   font-weight: 600;
-  font-size: 14px;
-  transition: var(--transition);
-  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.25), 0 2px 4px rgba(0, 0, 0, 0.1);
-  position: relative;
-  overflow: hidden;
-}
-
-.btn-warning::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
-  transition: left 0.5s ease;
-}
-
-.btn-warning:hover::before {
-  left: 100%;
+  font-size: 15px;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.25);
 }
 
 .btn-warning:hover {
-  background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(245, 158, 11, 0.4), 0 4px 8px rgba(0, 0, 0, 0.15);
+  background: linear-gradient(180deg, #d97706 0%, #b45309 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.35);
 }
 
 .btn-warning:active {
   transform: translateY(0);
-  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.3), 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 4px rgba(245, 158, 11, 0.2);
 }
 
 .btn-warning:focus-visible {
@@ -1135,47 +1097,30 @@ button.secondary:hover,
   outline-offset: 2px;
 }
 
-/* Beautiful danger button with gradient and glow effects */
+/* Danger button - red */
 .btn-danger {
-  background: linear-gradient(135deg, var(--danger) 0%, #dc2626 100%);
+  background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
   color: white;
   border: none;
   border-radius: var(--radius);
-  padding: 14px 24px;
+  padding: 16px 24px;
   cursor: pointer;
   font-weight: 600;
-  font-size: 14px;
-  transition: var(--transition);
-  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.25), 0 2px 4px rgba(0, 0, 0, 0.1);
+  font-size: 15px;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.25);
   width: 100%;
-  position: relative;
-  overflow: hidden;
-}
-
-.btn-danger::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: -100%;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-  transition: left 0.5s ease;
-}
-
-.btn-danger:hover::before {
-  left: 100%;
 }
 
 .btn-danger:hover {
-  background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(239, 68, 68, 0.4), 0 4px 8px rgba(0, 0, 0, 0.15);
+  background: linear-gradient(180deg, #dc2626 0%, #b91c1c 100%);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(239, 68, 68, 0.35);
 }
 
 .btn-danger:active {
   transform: translateY(0);
-  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.3), 0 1px 2px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 4px rgba(239, 68, 68, 0.2);
 }
 
 .btn-danger:focus-visible {
