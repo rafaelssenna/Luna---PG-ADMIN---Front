@@ -110,22 +110,24 @@ const lastLeadParams = null
 let quotaInterval = null
 
 // === Conversas ===
-// Função utilitária para carregar o iframe de conversas com a API correta.
-// Deve haver um <iframe id="conversasFrame"> no HTML. A URL será
-// ajustada para incluir ?api=<API_BASE_URL>/api, garantindo que a interface
-// de conversas se comunique com o backend correto.
+// Agora passamos também o client=<slug> para o iframe de conversas
 function ensureConversasIframe() {
   const frame = document.getElementById("conversasFrame")
   if (!frame) return
-  // Constrói a URL da API: garante que não haja barra dupla e inclui /api
-  const base = typeof API_BASE_URL === "string" && API_BASE_URL ? API_BASE_URL : ""
-  const api = base.endsWith("/") ? `${base}api` : `${base}/api`
-  const desired = `./conversas.html?api=${encodeURIComponent(api)}`
-  const current = frame.getAttribute("src") || ""
-  // Atualiza o src apenas se estiver vazio ou se apontar para outra API
-  if (!current || !current.endsWith(encodeURIComponent(api))) {
-    frame.setAttribute("src", desired)
-  }
+
+  // base da API
+  const base = (typeof window.API_BASE_URL === "string" && window.API_BASE_URL) ? window.API_BASE_URL : ""
+  const api  = base.endsWith("/") ? `${base}api` : `${base}/api`
+
+  // cliente selecionado
+  const client = (window.state && window.state.selected) ? window.state.selected : ""
+
+  const qs = new URLSearchParams({ api })
+  if (client) qs.set("client", client)
+
+  const want = `./conversas.html?${qs.toString()}`
+  const has = frame.getAttribute("src") || ""
+  if (!has || !has.endsWith(qs.toString())) frame.setAttribute("src", want)
 }
 
 // >>> Atualiza o texto do botão de loop conforme estado do servidor
@@ -188,10 +190,7 @@ function activateTab(tab) {
     }
   }
 
-  // Se a aba selecionada for "conversas", assegura que o iframe de conversas tenha o src apropriado
-  if (tab === "conversas") {
-    ensureConversasIframe()
-  }
+  if (tab === "conversas") ensureConversasIframe()
 }
 
 // Clients
@@ -226,9 +225,7 @@ function renderClientList() {
 
 async function createClient(slugRaw) {
   try {
-    const slug = String(slugRaw || "")
-      .trim()
-      .toLowerCase()
+    const slug = String(slugRaw || "").trim().toLowerCase()
     if (!slug) return
     const ok = /^[a-z0-9_]{1,64}$/.test(slug)
     if (!ok) {
@@ -319,7 +316,7 @@ function renderQueue() {
   $("#queuePrev") && ($("#queuePrev").disabled = state.queue.page <= 1)
   $("#queueNext") && ($("#queueNext").disabled = state.queue.page >= totalPages)
 
-  wrap.querySelectorAll("button[data-act]").forEach((btn) => {
+  $("#queueBody").querySelectorAll("button[data-act]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const phone = btn.dataset.phone
       const name = btn.dataset.name
@@ -399,7 +396,6 @@ function renderTotals() {
   const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize))
   $("#totalsPageInfo") &&
     ($("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`)
-  // >>> CORREÇÃO: removidos parênteses extras
   $("#totalsPrev") && ($("#totalsPrev").disabled = state.totals.page <= 1)
   $("#totalsNext") && ($("#totalsNext").disabled = state.totals.page >= totalPages)
 }
