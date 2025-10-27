@@ -1,4 +1,4 @@
-/* app.js — Luna (com limite diário por cliente + loader discreto + quota na aba Progresso)
+/* app.js — Luna (limite diário por cliente + loader + quota + Conversas filtradas por cliente)
    Arquivo completo
 */
 
@@ -53,7 +53,7 @@ async function api(path, options = {}) {
   }
 }
 
-// Helper: dispara POST sem mostrar overlay e sem travar a UI
+// POST sem travar a UI
 async function postJsonNoWait(path, body, { timeoutMs = 1500 } = {}) {
   const controller = new AbortController()
   const t = setTimeout(() => controller.abort(), timeoutMs)
@@ -71,7 +71,7 @@ async function postJsonNoWait(path, body, { timeoutMs = 1500 } = {}) {
   }
 }
 
-// Normaliza a URL do gateway: adiciona http(s) e /send/text se faltar
+// Normaliza o endpoint do gateway
 function normalizeInstanceUrl(raw) {
   if (!raw) return ""
   let u = raw.trim()
@@ -82,6 +82,52 @@ function normalizeInstanceUrl(raw) {
     u = url.toString()
   } catch {}
   return u.replace(/\/$/, "")
+}
+
+// Hints para Conversas
+function systemNameFromInstanceUrl(u) {
+  try {
+    const host = new URL(u).hostname || ""
+    return (host.split(".")[0] || "").toLowerCase()
+  } catch {
+    return ""
+  }
+}
+function instHintFromInstanceUrl(u) {
+  try {
+    const url = new URL(u)
+    const hash = (url.hash || "").replace(/^#/, "")
+    if (!hash) return ""
+    const qs = new URLSearchParams(hash)
+    return (qs.get("inst") || "").trim()
+  } catch {
+    return ""
+  }
+}
+function ensureConversasIframe() {
+  const frame = document.getElementById("conversasFrame")
+  if (!frame) return
+
+  // Base da API para o conversas.html
+  const base = typeof window.API_BASE_URL === "string" && window.API_BASE_URL ? window.API_BASE_URL : ""
+  const api = base.endsWith("/") ? `${base}api` : `${base}/api`
+
+  const client = state.selected || ""
+
+  // Dicas de sistema/instância vindas da Config do cliente
+  const sysHint = systemNameFromInstanceUrl(state.settings.instanceUrl || "")
+  const instHint = instHintFromInstanceUrl(state.settings.instanceUrl || "") ||
+                   (state.settings.instanceAuthScheme || "").startsWith("inst:")
+                     ? (state.settings.instanceAuthScheme || "").slice(5).trim()
+                     : ""
+
+  const qs = new URLSearchParams({ api, client, autologin: "1" })
+  if (sysHint) qs.set("system", sysHint)
+  if (instHint) qs.set("inst", instHint)
+
+  const want = `./conversas.html?${qs.toString()}`
+  const has = frame.getAttribute("src") || ""
+  if (has !== want) frame.setAttribute("src", want)
 }
 
 // Estado global
@@ -102,34 +148,10 @@ const state = {
   },
 }
 
-// >>> Flags para evitar buscas concorrentes de leads
 let leadsBusy = false
-const lastLeadParams = null
-
-// >>> Atualização periódica da cota quando a aba Progresso está ativa
 let quotaInterval = null
 
-// === Conversas ===
-// Aponta o iframe para conversas.html com API + CLIENTE + AUTOLOGIN. Atualiza também quando troca de cliente.
-function ensureConversasIframe(force = false) {
-  const frame = document.getElementById("conversasFrame")
-  if (!frame) return
-
-  const base = (typeof window.API_BASE_URL === "string" && window.API_BASE_URL) ? window.API_BASE_URL : ""
-  const api  = base.endsWith("/") ? `${base}api` : `${base}/api`
-
-  const client = (window.state && window.state.selected) ? window.state.selected : ""
-  const qs = new URLSearchParams({ api, autologin: "1", v: String(Date.now()) }) // v = cache buster
-  if (client) qs.set("client", client)
-
-  const want = `./conversas.html?${qs.toString()}`
-  const has  = frame.getAttribute("src") || ""
-  if (force || !has || !has.includes(`client=${encodeURIComponent(client)}`) || !has.includes(`api=`)) {
-    frame.setAttribute("src", want)
-  }
-}
-
-// >>> Atualiza o texto do botão de loop conforme estado do servidor
+// Atualiza CTA do loop
 async function refreshLoopCta() {
   const btn = $("#btnRunLoop")
   if (!state.selected || !btn) return
@@ -152,7 +174,7 @@ async function refreshLoopCta() {
   }
 }
 
-// Atualiza cota (Progress → Cota de Hoje)
+// Progresso (quota)
 async function loadQuota() {
   if (!state.selected) return
   try {
@@ -172,7 +194,7 @@ async function loadQuota() {
   } catch {}
 }
 
-// Tab navigation
+// Tabs
 function activateTab(tab) {
   $$(".tab-btn").forEach((b) => b.classList.remove("active"))
   $(`.tab-btn[data-tab="${tab}"]`)?.classList.add("active")
@@ -180,7 +202,7 @@ function activateTab(tab) {
   $(`#tab-${tab}`)?.classList.remove("tab-hidden")
 
   if (tab === "progress") {
-    loadQuota() // imediato
+    loadQuota()
     if (!quotaInterval) quotaInterval = setInterval(loadQuota, 30000)
   } else {
     if (quotaInterval) {
@@ -189,7 +211,7 @@ function activateTab(tab) {
     }
   }
 
-  if (tab === "conversas") ensureConversasIframe(true)
+  if (tab === "conversas") ensureConversasIframe()
 }
 
 // Clients
@@ -203,7 +225,6 @@ async function loadClients() {
     }
   } catch {}
 }
-
 function renderClientList() {
   const ul = $("#clientList")
   if (!ul) return
@@ -221,7 +242,6 @@ function renderClientList() {
   ul.innerHTML = ""
   list.forEach((li) => ul.appendChild(li))
 }
-
 async function createClient(slugRaw) {
   try {
     const slug = String(slugRaw || "").trim().toLowerCase()
@@ -237,7 +257,6 @@ async function createClient(slugRaw) {
     selectClient(slug)
   } catch {}
 }
-
 async function selectClient(slug) {
   state.selected = slug
   const title = $("#clientTitle")
@@ -246,10 +265,6 @@ async function selectClient(slug) {
   await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings()])
   await refreshLoopCta()
   await loadQuota()
-
-  // Se a aba conversas estiver ativa, recarrega o iframe com o novo client
-  const conversasVisible = !$("#tab-conversas")?.classList.contains("tab-hidden")
-  if (conversasVisible) ensureConversasIframe(true)
 }
 
 // KPIs
@@ -290,7 +305,6 @@ async function loadQueue() {
     renderQueue()
   } catch {}
 }
-
 function renderQueue() {
   const wrap = $("#queueBody")
   if (!wrap) return
@@ -314,12 +328,11 @@ function renderQueue() {
       .join("")
   }
   const totalPages = Math.max(1, Math.ceil((state.queue.total || 0) / state.queue.pageSize))
-  $("#queuePageInfo") &&
-    ($("#queuePageInfo").textContent = `Página ${state.queue.page} de ${totalPages} (${state.queue.total} itens)`)
+  $("#queuePageInfo") && ($("#queuePageInfo").textContent = `Página ${state.queue.page} de ${totalPages} (${state.queue.total} itens)`)
   $("#queuePrev") && ($("#queuePrev").disabled = state.queue.page <= 1)
   $("#queueNext") && ($("#queueNext").disabled = state.queue.page >= totalPages)
 
-  $("#queueBody").querySelectorAll("button[data-act]").forEach((btn) => {
+  wrap.querySelectorAll("button[data-act]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const phone = btn.dataset.phone
       const name = btn.dataset.name
@@ -332,7 +345,6 @@ function renderQueue() {
     })
   })
 }
-
 async function markAsSent(phone, name = "") {
   if (!state.selected || !phone) return
   try {
@@ -344,7 +356,6 @@ async function markAsSent(phone, name = "") {
     await Promise.all([loadQueue(), loadTotals(), loadStats(), loadClients(), loadQuota()])
   } catch {}
 }
-
 async function removeFromQueue(phone) {
   if (!state.selected || !phone) return
   try {
@@ -370,7 +381,6 @@ async function loadTotals() {
     renderTotals()
   } catch {}
 }
-
 function renderTotals() {
   const wrap = $("#totalsBody")
   if (!wrap) return
@@ -397,8 +407,7 @@ function renderTotals() {
       .join("")
   }
   const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize))
-  $("#totalsPageInfo") &&
-    ($("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`)
+  $("#totalsPageInfo") && ($("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`)
   $("#totalsPrev") && ($("#totalsPrev").disabled = state.totals.page <= 1)
   $("#totalsNext") && ($("#totalsNext").disabled = state.totals.page >= totalPages)
 }
@@ -433,7 +442,6 @@ async function addContact() {
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()])
   } catch {}
 }
-
 async function importCSV(file) {
   if (!state.selected || !file) return
   showLoading()
@@ -465,10 +473,10 @@ async function loadServerSettings() {
     state.settings = {
       autoRun: !!s.autoRun,
       iaAuto: !!s.iaAuto,
-      instanceUrl: s.instanceUrl || "",
-      instanceToken: s.instanceToken || "",
-      instanceAuthHeader: s.instanceAuthHeader || "token",
-      instanceAuthScheme: s.instanceAuthScheme || "",
+      instanceUrl: s.instanceUrl || s.instance_url || "",
+      instanceToken: s.instanceToken || s.instance_token || "",
+      instanceAuthHeader: s.instanceAuthHeader || s.instance_auth_header || "token",
+      instanceAuthScheme: s.instanceAuthScheme || s.instance_auth_scheme || "",
       dailyLimit: Number.isFinite(Number(s.dailyLimit)) ? Number(s.dailyLimit) : 30,
     }
   } catch {
@@ -490,8 +498,11 @@ async function loadServerSettings() {
   $("#cfgAuthScheme") && ($("#cfgAuthScheme").value = state.settings.instanceAuthScheme || "")
   $("#cfgDailyLimit") && ($("#cfgDailyLimit").value = state.settings.dailyLimit ?? 30)
   $("#cfgMeta") && ($("#cfgMeta").textContent = "")
-}
 
+  // Se já estiver na aba Conversas, atualiza o iframe com os hints da instância
+  const activeTab = document.querySelector(".tab-btn.active")?.dataset.tab
+  if (activeTab === "conversas") ensureConversasIframe()
+}
 async function saveServerSettings() {
   if (!state.selected) return
   const dailyLimitRaw = ($("#cfgDailyLimit")?.value || "").trim()
@@ -516,7 +527,7 @@ async function saveServerSettings() {
   } catch {}
 }
 
-/* runLoop: dispara o loop via backend sem travar a UI */
+// Loop
 async function runLoop() {
   if (!state.selected) return
   const iaAuto = $("#cfgIaAuto")?.checked || false
@@ -525,8 +536,6 @@ async function runLoop() {
   Promise.allSettled([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()])
   await refreshLoopCta()
 }
-
-/* >>> Parar o loop atual via /api/stop-loop */
 async function stopLoop() {
   if (!state.selected) return
   try {
@@ -545,7 +554,7 @@ async function stopLoop() {
   }
 }
 
-/* >>> Buscar & Salvar Leads (com trava de concorrência) */
+// Leads
 async function searchLeadsAndSave() {
   if (!state.selected) {
     showToast("Selecione um cliente", "warning")
@@ -561,7 +570,6 @@ async function searchLeadsAndSave() {
     showToast("Informe pelo menos Região ou Nicho", "warning")
     return
   }
-
   if (leadsBusy) {
     showToast("Uma busca já está em execução… aguarde terminar.", "warning")
     return
@@ -574,8 +582,7 @@ async function searchLeadsAndSave() {
     btn.textContent = "⏳ Buscando…"
   }
 
-  $("#leadsResult") &&
-    ($("#leadsResult").textContent = `Buscando: região="${region}", nicho="${niche}", limite=${limit}`)
+  $("#leadsResult") && ($("#leadsResult").textContent = `Buscando: região="${region}", nicho="${niche}", limite=${limit}`)
 
   try {
     const result = await api("/api/leads", {
@@ -587,7 +594,7 @@ async function searchLeadsAndSave() {
     showToast(`Leads adicionados: ${result.inserted || 0}`, "success")
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()])
   } catch (e) {
-    // api() já trata toasts
+    /* api() já mostra toast */
   } finally {
     leadsBusy = false
     if (btn) {
@@ -624,11 +631,9 @@ async function deleteClient() {
       const title = $("#clientTitle")
       if (title) title.textContent = "—"
       const qb = $("#queueBody")
-      if (qb)
-        qb.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/4">Nenhum contato na fila</div></div>`
+      if (qb) qb.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/4">Nenhum contato na fila</div></div>`
       const tb = $("#totalsBody")
-      if (tb)
-        tb.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/6">Nenhum registro encontrado</div></div>`
+      if (tb) tb.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/6">Nenhum registro encontrado</div></div>`
       $("#kpiTotais") && ($("#kpiTotais").textContent = 0)
       $("#kpiEnviados") && ($("#kpiEnviados").textContent = 0)
       $("#kpiFila") && ($("#kpiFila").textContent = 0)
@@ -656,104 +661,87 @@ document.addEventListener("DOMContentLoaded", () => {
   activateTab("queue")
 
   $("#clientSearch") && $("#clientSearch").addEventListener("input", renderClientList)
-  $("#btnCreateClient") &&
-    $("#btnCreateClient").addEventListener("click", () => createClient($("#newClientInput").value))
+  $("#btnCreateClient") && $("#btnCreateClient").addEventListener("click", () => createClient($("#newClientInput").value))
 
-  $("#queueSearch") &&
-    $("#queueSearch").addEventListener("input", (e) => {
-      state.queue.search = e.target.value
-      state.queue.page = 1
+  $("#queueSearch") && $("#queueSearch").addEventListener("input", (e) => {
+    state.queue.search = e.target.value
+    state.queue.page = 1
+    loadQueue()
+  })
+  $("#queuePrev") && $("#queuePrev").addEventListener("click", () => {
+    if (state.queue.page > 1) {
+      state.queue.page--
       loadQueue()
-    })
-  $("#queuePrev") &&
-    $("#queuePrev").addEventListener("click", () => {
-      if (state.queue.page > 1) {
-        state.queue.page--
-        loadQueue()
-      }
-    })
-  $("#queueNext") &&
-    $("#queueNext").addEventListener("click", () => {
-      const totalPages = Math.max(1, Math.ceil((state.queue.total || 0) / state.queue.pageSize))
-      if (state.queue.page < totalPages) {
-        state.queue.page++
-        loadQueue()
-      }
-    })
+    }
+  })
+  $("#queueNext") && $("#queueNext").addEventListener("click", () => {
+    const totalPages = Math.max(1, Math.ceil((state.queue.total || 0) / state.queue.pageSize))
+    if (state.queue.page < totalPages) {
+      state.queue.page++
+      loadQueue()
+    }
+  })
 
-  $("#totalsSearch") &&
-    $("#totalsSearch").addEventListener("input", (e) => {
-      state.totals.search = e.target.value
-      state.totals.page = 1
+  $("#totalsSearch") && $("#totalsSearch").addEventListener("input", (e) => {
+    state.totals.search = e.target.value
+    state.totals.page = 1
+    loadTotals()
+  })
+  $("#totalsFilter") && $("#totalsFilter").addEventListener("change", (e) => {
+    state.totals.sent = e.target.value
+    state.totals.page = 1
+    loadTotals()
+  })
+  $("#totalsPrev") && $("#totalsPrev").addEventListener("click", () => {
+    if (state.totals.page > 1) {
+      state.totals.page--
       loadTotals()
-    })
-  $("#totalsFilter") &&
-    $("#totalsFilter").addEventListener("change", (e) => {
-      state.totals.sent = e.target.value
-      state.totals.page = 1
+    }
+  })
+  $("#totalsNext") && $("#totalsNext").addEventListener("click", () => {
+    const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize))
+    if (state.totals.page < totalPages) {
+      state.totals.page++
       loadTotals()
-    })
-  $("#totalsPrev") &&
-    $("#totalsPrev").addEventListener("click", () => {
-      if (state.totals.page > 1) {
-        state.totals.page--
-        loadTotals()
-      }
-    })
-  $("#totalsNext") &&
-    $("#totalsNext").addEventListener("click", () => {
-      const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize))
-      if (state.totals.page < totalPages) {
-        state.totals.page++
-        loadTotals()
-      }
-    })
+    }
+  })
 
   $("#btnAddContact") && $("#btnAddContact").addEventListener("click", addContact)
 
-  $("#csvForm") &&
-    $("#csvForm").addEventListener("submit", (e) => {
-      e.preventDefault()
-      const file = $("#csvFile")?.files?.[0]
-      if (!file) {
-        showToast("Selecione um CSV", "warning")
-        return
-      }
-      importCSV(file)
-    })
+  $("#csvForm") && $("#csvForm").addEventListener("submit", (e) => {
+    e.preventDefault()
+    const file = $("#csvFile")?.files?.[0]
+    if (!file) {
+      showToast("Selecione um CSV", "warning")
+      return
+    }
+    importCSV(file)
+  })
 
   $("#btnSaveConfig") && $("#btnSaveConfig").addEventListener("click", saveServerSettings)
   $("#btnRunLoop") && $("#btnRunLoop").addEventListener("click", runLoop)
-  $("#btnStopLoop") &&
-    $("#btnStopLoop").addEventListener("click", (e) => {
-      e.preventDefault()
-      stopLoop()
-    })
+  $("#btnStopLoop") && $("#btnStopLoop").addEventListener("click", (e) => {
+    e.preventDefault()
+    stopLoop()
+  })
   $("#btnClearTable") && $("#btnClearTable").addEventListener("click", deleteClient)
-
   $("#btnLeadsSearch") && $("#btnLeadsSearch").addEventListener("click", searchLeadsAndSave)
 
-  $("#btnRefreshAll") &&
-    $("#btnRefreshAll").addEventListener("click", async () => {
-      await loadClients()
-      if (state.selected) {
-        await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings(), loadQuota(), refreshLoopCta()])
-        // Se aba conversas estiver aberta, força reload do iframe (útil após alterar config)
-        const conversasVisible = !$("#tab-conversas")?.classList.contains("tab-hidden")
-        if (conversasVisible) ensureConversasIframe(true)
-      }
-    })
+  $("#btnRefreshAll") && $("#btnRefreshAll").addEventListener("click", async () => {
+    await loadClients()
+    if (state.selected) {
+      await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings(), loadQuota(), refreshLoopCta()])
+    }
+  })
 
   loadClients()
 
-  // Se a URL contiver o parâmetro ?tab=conversas, abre a aba Conversas automaticamente
+  // Abrir Conversas via ?tab=conversas
   try {
     const _url = new URL(window.location.href)
     const _tab = (_url.searchParams.get("tab") || "").toLowerCase()
     if (_tab === "conversas") {
       activateTab("conversas")
     }
-  } catch (err) {
-    // ignore erros de URL
-  }
+  } catch {}
 })
