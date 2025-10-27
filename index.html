@@ -35,21 +35,27 @@
       border-radius: 50%;
       animation: spin 0.7s linear infinite;
     }
-    .loading-overlay .label {
-      font-size: 12px;
-      opacity: .9;
-    }
+    .loading-overlay .label { font-size: 12px; opacity: .9; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* Barra de cota (fallback, caso não exista no styles.css) */
+    /* Barra de cota (fallback) */
     .quota-row { display: flex; align-items: center; gap: 10px; }
     .quota-bar { flex: 1 1 auto; height: 10px; background: #ececec; border-radius: 999px; overflow: hidden; }
     .quota-fill { height: 100%; width: 0%; background: var(--accent, #4f46e5); transition: width .4s ease; }
     .planned-list { list-style: none; padding-left: 0; margin: 0; }
     .planned-list li { padding: 4px 0; border-bottom: 1px dashed rgba(0,0,0,.1); }
+
+    /* Conversas (iframe em tela cheia) */
+    .iframe-full {
+      width: 100%;
+      height: calc(100vh - 120px);
+      border: none;
+      background: #0d171c;
+      display: block;
+    }
   </style>
 
-  <!-- Add-on de progresso (compatível com a aba Progresso já existente) -->
+  <!-- Add-on de progresso -->
   <script defer src="/progress.bundle.js"></script>
 </head>
 <body>
@@ -122,6 +128,8 @@
         <button id="tabButtonImport"   class="tab-btn" data-tab="import">Importar CSV</button>
         <button id="tabButtonProgress" class="tab-btn" data-tab="progress">Progresso</button>
         <button id="tabButtonConfig"   class="tab-btn" data-tab="config">Config</button>
+        <!-- NOVO -->
+        <button id="tabButtonConversas" class="tab-btn" data-tab="conversas">Conversas</button>
       </nav>
 
       <!-- TAB: FILA -->
@@ -133,9 +141,7 @@
           <div class="thead">
             <div>Nome</div><div>Telefone</div><div>Ações</div>
           </div>
-          <div id="queueBody" class="tbody">
-            <!-- linhas -->
-          </div>
+          <div id="queueBody" class="tbody"></div>
           <div class="tfoot">
             <div class="pager">
               <button id="queuePrev">◀</button>
@@ -313,10 +319,16 @@
           <div id="leadsResult" class="muted"></div>
         </div>
       </section>
+
+      <!-- NOVA TAB: CONVERSAS -->
+      <section id="tab-conversas" class="tab tab-hidden">
+        <!-- o src será definido via JS, incluindo ?api= -->
+        <iframe id="conversasFrame" class="iframe-full"></iframe>
+      </section>
     </main>
   </div>
 
-  <!-- Containers utilitários gerenciados pelo JS -->
+  <!-- Toasts / Loader -->
   <div id="toast-container" class="toast-container"></div>
   <div id="loading-overlay" class="loading-overlay" role="status" aria-live="polite" style="display:none">
     <div class="spinner"></div>
