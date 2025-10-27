@@ -110,24 +110,23 @@ const lastLeadParams = null
 let quotaInterval = null
 
 // === Conversas ===
-// Agora passamos também o client=<slug> para o iframe de conversas
-function ensureConversasIframe() {
+// Aponta o iframe para conversas.html com API + CLIENTE + AUTOLOGIN. Atualiza também quando troca de cliente.
+function ensureConversasIframe(force = false) {
   const frame = document.getElementById("conversasFrame")
   if (!frame) return
 
-  // base da API
   const base = (typeof window.API_BASE_URL === "string" && window.API_BASE_URL) ? window.API_BASE_URL : ""
   const api  = base.endsWith("/") ? `${base}api` : `${base}/api`
 
-  // cliente selecionado
   const client = (window.state && window.state.selected) ? window.state.selected : ""
-
-  const qs = new URLSearchParams({ api })
+  const qs = new URLSearchParams({ api, autologin: "1", v: String(Date.now()) }) // v = cache buster
   if (client) qs.set("client", client)
 
   const want = `./conversas.html?${qs.toString()}`
-  const has = frame.getAttribute("src") || ""
-  if (!has || !has.endsWith(qs.toString())) frame.setAttribute("src", want)
+  const has  = frame.getAttribute("src") || ""
+  if (force || !has || !has.includes(`client=${encodeURIComponent(client)}`) || !has.includes(`api=`)) {
+    frame.setAttribute("src", want)
+  }
 }
 
 // >>> Atualiza o texto do botão de loop conforme estado do servidor
@@ -190,7 +189,7 @@ function activateTab(tab) {
     }
   }
 
-  if (tab === "conversas") ensureConversasIframe()
+  if (tab === "conversas") ensureConversasIframe(true)
 }
 
 // Clients
@@ -247,6 +246,10 @@ async function selectClient(slug) {
   await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings()])
   await refreshLoopCta()
   await loadQuota()
+
+  // Se a aba conversas estiver ativa, recarrega o iframe com o novo client
+  const conversasVisible = !$("#tab-conversas")?.classList.contains("tab-hidden")
+  if (conversasVisible) ensureConversasIframe(true)
 }
 
 // KPIs
@@ -735,10 +738,14 @@ document.addEventListener("DOMContentLoaded", () => {
       await loadClients()
       if (state.selected) {
         await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings(), loadQuota(), refreshLoopCta()])
+        // Se aba conversas estiver aberta, força reload do iframe (útil após alterar config)
+        const conversasVisible = !$("#tab-conversas")?.classList.contains("tab-hidden")
+        if (conversasVisible) ensureConversasIframe(true)
       }
     })
 
   loadClients()
+
   // Se a URL contiver o parâmetro ?tab=conversas, abre a aba Conversas automaticamente
   try {
     const _url = new URL(window.location.href)
