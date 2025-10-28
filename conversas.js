@@ -74,6 +74,12 @@ function systemNameFromInstanceUrl(u) {
   } catch { return ""; }
 }
 
+// Polyfill simples para CSS.escape (evita erro em navegadores antigos)
+if (!window.CSS) window.CSS = {};
+if (typeof window.CSS.escape !== "function") {
+  window.CSS.escape = (s) => String(s).replace(/[^a-zA-Z0-9_\-]/g, (ch) => "\\" + ch);
+}
+
 /* ====== Estado ====== */
 const state = {
   screen: "login",              // 'login' | 'instances' | 'chats'
@@ -358,7 +364,7 @@ function renderMessages(list) {
   wrap.innerHTML = `<div class="messages-col">${html}</div>`;
 }
 
-/* ====== API ====== */
+/* ====== API / Filtro por cliente ====== */
 async function computeInstanceFilter() {
   // Define hint de sistema a partir do client-settings (instance_url) + ?system=
   let hint = "";
@@ -376,60 +382,84 @@ async function computeInstanceFilter() {
   state.instanceFilterHint = hint || "";
 }
 
+/* ====== Carregar e auto-selecionar instância ====== */
 async function loadInstances() {
   if (els.instanceList)
     els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Carregando...</p></div>`;
 
   try {
-    const res = await fetch(`${API}/instances`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
+    // 1) Busca lista de instâncias, config do cliente e a resolução exata
+    const [resInst, resCfg, resResolve] = await Promise.all([
+      fetch(`${API}/instances`),
+      CLIENT_SLUG ? fetch(`${API}/client-settings?client=${encodeURIComponent(CLIENT_SLUG)}`) : Promise.resolve(null),
+      CLIENT_SLUG ? fetch(`${API}/instances/resolve?client=${encodeURIComponent(CLIENT_SLUG)}`) : Promise.resolve(null),
+    ]);
+
+    if (!resInst.ok) throw new Error(`HTTP ${resInst.status}`);
+    const json = await resInst.json();
     state.instances = Array.isArray(json.instances) ? json.instances : [];
 
-    // Busca a URL salva do cliente
+    // 2) Calcula hint (domínio) pelo endpoint salvo
     let clientUrl = "";
-    if (CLIENT_SLUG) {
-      try {
-        const cfg = await fetch(`${API}/client-settings?client=${encodeURIComponent(CLIENT_SLUG)}`);
-        if (cfg.ok) {
-          const s = await cfg.json();
-          clientUrl = s.instance_url || s.instanceUrl || "";
-        }
-      } catch {}
+    if (resCfg && resCfg.ok) {
+      const s = await resCfg.json();
+      clientUrl = s.instance_url || s.instanceUrl || "";
     }
-
-    // Extrai systemName da URL do cliente
     const hint = clientUrl ? systemNameFromInstanceUrl(clientUrl) : "";
     state.instanceFilterHint = hint;
 
-    // Filtra instâncias que batem com o domínio
+    // 3) Filtra a lista exibida pelo domínio (quando houver)
     if (hint) {
+      const h = hint.toLowerCase();
       state.baseInstances = state.instances.filter((i) => {
         const sys = String(i.systemName || "").toLowerCase();
         const nm  = String(i.name || "").toLowerCase();
-        return sys.includes(hint) || nm.includes(hint);
+        return sys.includes(h) || nm.includes(h);
       });
     } else {
       state.baseInstances = [...state.instances];
     }
 
-    // Renderiza
+    // 4) Renderiza a lista
     state.filteredInstances = [];
     renderInstances();
 
-    // Autoabrir instância que bate com o domínio salvo
-    if (state.baseInstances.length) {
-      const target = state.baseInstances[0]; // primeira da lista
-      if (target) {
-        setTimeout(async () => {
-          state.currentInstanceId = target.id;
-          goToChats();
-          await loadChats(target.id, els.chatSearch?.value);
-          if (els.messages)
-            els.messages.innerHTML = `<div class="wa-empty-state"><p>Selecione um chat para ver as mensagens</p></div>`;
-          if (els.chatTitle) els.chatTitle.textContent = "Selecione um chat";
-          if (els.chatSubtitle) els.chatSubtitle.textContent = "";
-        }, 400);
+    // 5) Decide qual instância abrir
+    let targetId = null;
+
+    // 5.1 Preferência: backend resolveu por token/systemName
+    if (resResolve && resResolve.ok) {
+      const r = await resResolve.json();
+      targetId = r?.id || null;
+    }
+
+    // 5.2 Se não resolveu, tenta o hint de ?inst= (pode ser id ou nome)
+    if (!targetId && INST_HINT) {
+      const ih = INST_HINT.toLowerCase();
+      const byId  = state.instances.find((i) => String(i.id).toLowerCase() === ih);
+      const byNm  = state.instances.find((i) => String(i.name || "").toLowerCase().includes(ih));
+      targetId = (byId || byNm)?.id || null;
+    }
+
+    // 5.3 Se ainda não achou, tenta match exato de systemName do domínio
+    if (!targetId && hint) {
+      const exactSys = state.instances.find((i) => String(i.systemName || "").toLowerCase() === hint.toLowerCase());
+      targetId = exactSys?.id || null;
+    }
+
+    // 6) Se tem targetId visível, clica na carta (não abre aleatória)
+    if (targetId) {
+      const sel = `.wa-instance-card[data-id="${CSS.escape(String(targetId))}"]`;
+      const card = document.querySelector(sel);
+      if (card) {
+        setTimeout(() => card.click(), 0);
+      } else {
+        showAlert("Instância configurada não está visível na lista. Verifique o domínio/instância.", "warning", 6000);
+      }
+    } else {
+      // se nada for resolvido, apenas mantém a lista filtrada
+      if (!state.baseInstances.length) {
+        els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Nenhuma instância encontrada para este cliente</p></div>`;
       }
     }
   } catch (err) {
@@ -437,13 +467,12 @@ async function loadInstances() {
     if (els.instanceList)
       els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Erro ao carregar instâncias</p></div>`;
     showAlert(
-      "Falha ao carregar instâncias. Verifique se o domínio está correto ou ajuste FRONT_ORIGINS no backend.",
+      "Falha ao carregar instâncias. Verifique se o domínio/token do cliente estão corretos.",
       "warning",
       9000
     );
   }
 }
-
 
 async function loadChats(instanceId, query) {
   const params = new URLSearchParams();
