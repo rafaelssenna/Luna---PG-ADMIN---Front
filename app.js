@@ -456,7 +456,7 @@ async function addContact() {
             ? "Já presente no histórico"
             : "Processado";
     showToast(msg, r.status === "inserted" ? "success" : "warning");
-    if ($("#addName")) $("#addName").value = "";
+    if ($("#addName"))  $("#addName").value  = "";
     if ($("#addPhone")) $("#addPhone").value = "";
     if ($("#addNiche")) $("#addNiche").value = "";
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()]);
@@ -509,14 +509,14 @@ async function loadServerSettings() {
       dailyLimit: 30,
     };
   }
-  $("#cfgAutoRun") && ($("#cfgAutoRun").checked  = !!state.settings.autoRun);
-  $("#cfgIaAuto") && ($("#cfgIaAuto").checked    = !!state.settings.iaAuto);
+  $("#cfgAutoRun")   && ($("#cfgAutoRun").checked   = !!state.settings.autoRun);
+  $("#cfgIaAuto")    && ($("#cfgIaAuto").checked    = !!state.settings.iaAuto);
   $("#cfgInstanceUrl") && ($("#cfgInstanceUrl").value = state.settings.instanceUrl || "");
   $("#cfgAuthHeader") && ($("#cfgAuthHeader").value  = state.settings.instanceAuthHeader || "token");
-  $("#cfgToken") && ($("#cfgToken").value            = state.settings.instanceToken || "");
-  $("#cfgAuthScheme") && ($("#cfgAuthScheme").value  = state.settings.instanceAuthScheme || "");
-  $("#cfgDailyLimit") && ($("#cfgDailyLimit").value  = state.settings.dailyLimit ?? 30);
-  $("#cfgMeta") && ($("#cfgMeta").textContent = "");
+  $("#cfgToken")     && ($("#cfgToken").value     = state.settings.instanceToken || "");
+  $("#cfgAuthScheme")&& ($("#cfgAuthScheme").value = state.settings.instanceAuthScheme || "");
+  $("#cfgDailyLimit")&& ($("#cfgDailyLimit").value = state.settings.dailyLimit ?? 30);
+  $("#cfgMeta")      && ($("#cfgMeta").textContent = "");
 
   // Se a aba Conversas estiver ativa, atualiza o iframe para refletir hints da instância
   const activeTab = document.querySelector(".tab-btn.active")?.dataset.tab;
