@@ -377,17 +377,33 @@ async function computeInstanceFilter() {
 }
 
 async function loadInstances() {
-  if (els.instanceList) els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Carregando...</p></div>`;
+  if (els.instanceList)
+    els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Carregando...</p></div>`;
+
   try {
     const res = await fetch(`${API}/instances`);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
-
     state.instances = Array.isArray(json.instances) ? json.instances : [];
 
-    // Aplica filtro base por cliente/hints
-    if (state.instanceFilterHint) {
-      const hint = state.instanceFilterHint.toLowerCase();
+    // Busca a URL salva do cliente
+    let clientUrl = "";
+    if (CLIENT_SLUG) {
+      try {
+        const cfg = await fetch(`${API}/client-settings?client=${encodeURIComponent(CLIENT_SLUG)}`);
+        if (cfg.ok) {
+          const s = await cfg.json();
+          clientUrl = s.instance_url || s.instanceUrl || "";
+        }
+      } catch {}
+    }
+
+    // Extrai systemName da URL do cliente
+    const hint = clientUrl ? systemNameFromInstanceUrl(clientUrl) : "";
+    state.instanceFilterHint = hint;
+
+    // Filtra instâncias que batem com o domínio
+    if (hint) {
       state.baseInstances = state.instances.filter((i) => {
         const sys = String(i.systemName || "").toLowerCase();
         const nm  = String(i.name || "").toLowerCase();
@@ -397,35 +413,37 @@ async function loadInstances() {
       state.baseInstances = [...state.instances];
     }
 
-    // Se veio INST_HINT (nome/id), refina base para muito próximo
-    if (INST_HINT) {
-      const best = state.baseInstances.find((i) =>
-        String(i.name || i.id || "").toLowerCase().includes(INST_HINT)
-      ) || state.baseInstances.find((i) => String(i.id || "").toLowerCase() === INST_HINT);
-      if (best) state.baseInstances = [best];
-    }
-
-    // Limpa filtro da UI e renderiza
+    // Renderiza
     state.filteredInstances = [];
     renderInstances();
 
-    // Autoseleciona: se 1 resultado ou se veio hint de instância
-    const auto = state.baseInstances.length === 1 ? state.baseInstances[0] : null;
-    if (auto) {
-      setTimeout(() => {
-        const card = document.querySelector(`.wa-instance-card[data-id="${CSS.escape(String(auto.id))}"]`);
-        card?.click();
-      }, 0);
+    // Autoabrir instância que bate com o domínio salvo
+    if (state.baseInstances.length) {
+      const target = state.baseInstances[0]; // primeira da lista
+      if (target) {
+        setTimeout(async () => {
+          state.currentInstanceId = target.id;
+          goToChats();
+          await loadChats(target.id, els.chatSearch?.value);
+          if (els.messages)
+            els.messages.innerHTML = `<div class="wa-empty-state"><p>Selecione um chat para ver as mensagens</p></div>`;
+          if (els.chatTitle) els.chatTitle.textContent = "Selecione um chat";
+          if (els.chatSubtitle) els.chatSubtitle.textContent = "";
+        }, 400);
+      }
     }
   } catch (err) {
-    if (els.instanceList) els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Erro ao carregar instâncias</p></div>`;
+    console.error("Erro ao carregar instâncias", err);
+    if (els.instanceList)
+      els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Erro ao carregar instâncias</p></div>`;
     showAlert(
-      "Falha ao carregar instâncias. Verifique CORS/FRONT_ORIGINS no backend ou hospede em http(s).",
+      "Falha ao carregar instâncias. Verifique se o domínio está correto ou ajuste FRONT_ORIGINS no backend.",
       "warning",
       9000
     );
   }
 }
+
 
 async function loadChats(instanceId, query) {
   const params = new URLSearchParams();
