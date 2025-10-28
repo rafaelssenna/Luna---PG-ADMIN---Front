@@ -1,25 +1,25 @@
-// conversas.js — Supervisão WhatsApp (instância por cliente + hints system/inst + autologin)
+// conversas.js — Supervisão WhatsApp (AUTOSELEÇÃO pela instância salva em Config -> TOKEN)
 
 /* ====== Helpers de URL/API a partir do querystring ====== */
-// ?api=https://backend.com/api  | ?client=cliente_slug | ?autologin=1 | ?system=hint | ?inst=nome/ID
+// ?api=https://backend.com/api  | ?client=cliente_slug | ?autologin=1 | ?system=hint | ?inst=<TOKEN>
 function getApiBase() {
   const qsApi = new URLSearchParams(window.location.search).get("api");
   if (qsApi) {
     try {
       const u = new URL(qsApi, window.location.href);
       if (["http:", "https:"].includes(u.protocol)) {
-        return u.toString().replace(/\/+$/, ""); // remove barras finais
+        return u.toString().replace(/\/+$/, "");
       }
     } catch {}
   }
-  // fallback: relativo
   return "/api";
 }
-const API = getApiBase();
+const API         = getApiBase();
 const CLIENT_SLUG = new URLSearchParams(location.search).get("client") || "";
 const AUTOLOGIN   = /^(1|true|yes)$/i.test(new URLSearchParams(location.search).get("autologin") || "");
 const SYSTEM_HINT = (new URLSearchParams(location.search).get("system") || "").trim().toLowerCase();
-const INST_HINT   = (new URLSearchParams(location.search).get("inst")   || "").trim().toLowerCase();
+// >>> Agora este "inst" é o TOKEN da instância que queremos abrir
+const INST_TOKEN_QS = (new URLSearchParams(location.search).get("inst") || "").trim();
 
 /* ====== Utils ====== */
 function showAlert(msg, type = "warning", timeout = 6000) {
@@ -72,12 +72,6 @@ function systemNameFromInstanceUrl(u) {
     const host = new URL(u).hostname || "";
     return (host.split(".")[0] || "").toLowerCase();
   } catch { return ""; }
-}
-
-// Polyfill simples para CSS.escape (evita erro em navegadores antigos)
-if (!window.CSS) window.CSS = {};
-if (typeof window.CSS.escape !== "function") {
-  window.CSS.escape = (s) => String(s).replace(/[^a-zA-Z0-9_\-]/g, (ch) => "\\" + ch);
 }
 
 /* ====== Estado ====== */
@@ -201,7 +195,6 @@ function resolveChatAvatar(c) {
 
 /* ====== Mensagens: helpers ====== */
 function messageDisplayText(m) {
-  // tenta vários campos comuns
   const t =
     m?.text || m?.body || m?.message ||
     (m?.content && typeof m.content === "string" ? m.content : null) ||
@@ -215,7 +208,6 @@ function roleFromMessage(m) {
   return fromMe ? "user" : "client";
 }
 function buildMediaHtml(m) {
-  // cobre image/audio/video/document por campos comuns
   const media =
     m?.image?.url || m?.video?.url || m?.audio?.url || m?.document?.url ||
     m?.imageUrl || m?.videoUrl || m?.audioUrl || m?.documentUrl ||
@@ -364,9 +356,9 @@ function renderMessages(list) {
   wrap.innerHTML = `<div class="messages-col">${html}</div>`;
 }
 
-/* ====== API / Filtro por cliente ====== */
+/* ====== API ====== */
 async function computeInstanceFilter() {
-  // Define hint de sistema a partir do client-settings (instance_url) + ?system=
+  // Mantém hint de system como fallback (sem prioridade sobre token)
   let hint = "";
   if (CLIENT_SLUG) {
     try {
@@ -382,84 +374,125 @@ async function computeInstanceFilter() {
   state.instanceFilterHint = hint || "";
 }
 
-/* ====== Carregar e auto-selecionar instância ====== */
+/** Tenta obter o TOKEN preferido: ?inst=<token> tem prioridade, senão lê de /client-settings */
+async function getPreferredToken() {
+  if (INST_TOKEN_QS) return INST_TOKEN_QS;
+  if (!CLIENT_SLUG) return "";
+  try {
+    const r = await fetch(`${API}/client-settings?client=${encodeURIComponent(CLIENT_SLUG)}`);
+    if (!r.ok) return "";
+    const st = await r.json();
+    return (st.instance_token || st.instanceToken || "").trim();
+  } catch { return ""; }
+}
+
+/** Resolve um token do backend para a instância {id, name, systemName, avatarUrl, status} */
+async function resolveInstanceByToken(token) {
+  try {
+    const res = await fetch(`${API}/instances/resolve?token=${encodeURIComponent(token)}`);
+    if (!res.ok) return null;
+    return await res.json(); // { id, name, systemName, avatarUrl, status }
+  } catch { return null; }
+}
+
+/** Aplica a instância atual na UI (sidebar, botão export etc) */
+function applyCurrentInstanceUi(inst) {
+  if (!inst) return;
+  if (els.sidebarInstanceName) els.sidebarInstanceName.textContent = inst?.name || inst?.id || "Instância";
+  const online = isConnected(inst?.status);
+  if (els.sidebarInstanceStatus) {
+    els.sidebarInstanceStatus.textContent = online ? "Online" : "Offline";
+    els.sidebarInstanceStatus.className = `wa-status ${online ? "online" : "offline"}`;
+  }
+  if (els.btnExport) els.btnExport.disabled = false;
+  const sidebarAv = document.querySelector("#screen-workspace .wa-avatar");
+  if (sidebarAv) {
+    sidebarAv.innerHTML = "";
+    const av = resolveInstanceAvatar(inst);
+    if (av) sidebarAv.insertAdjacentHTML("afterbegin", `<img class="wa-avatar-img" src="${escapeHtml(av)}" alt="Avatar" />`);
+  }
+}
+
+/** Carrega todas as instâncias (lista) e abre automaticamente a instância do TOKEN, se existir */
 async function loadInstances() {
   if (els.instanceList)
     els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Carregando...</p></div>`;
 
   try {
-    // 1) Busca lista de instâncias, config do cliente e a resolução exata
-    const [resInst, resCfg, resResolve] = await Promise.all([
-      fetch(`${API}/instances`),
-      CLIENT_SLUG ? fetch(`${API}/client-settings?client=${encodeURIComponent(CLIENT_SLUG)}`) : Promise.resolve(null),
-      CLIENT_SLUG ? fetch(`${API}/instances/resolve?client=${encodeURIComponent(CLIENT_SLUG)}`) : Promise.resolve(null),
-    ]);
-
-    if (!resInst.ok) throw new Error(`HTTP ${resInst.status}`);
-    const json = await resInst.json();
+    // 1) Busca lista para renderização (não traz token)
+    const res = await fetch(`${API}/instances`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
     state.instances = Array.isArray(json.instances) ? json.instances : [];
 
-    // 2) Calcula hint (domínio) pelo endpoint salvo
-    let clientUrl = "";
-    if (resCfg && resCfg.ok) {
-      const s = await resCfg.json();
-      clientUrl = s.instance_url || s.instanceUrl || "";
+    // 2) Descobre token preferido (QS ou client-settings)
+    let preferredToken = await getPreferredToken();
+
+    // 3) Tenta resolver pelo token para pegar o ID real
+    if (preferredToken) {
+      const resolved = await resolveInstanceByToken(preferredToken);
+      if (resolved && resolved.id) {
+        // Mantém lista exibindo a instância preferida em primeiro lugar (ou única)
+        state.baseInstances = [resolved];
+        state.filteredInstances = [];
+        renderInstances();
+
+        // Abre diretamente a instância resolvida
+        state.currentInstanceId = resolved.id;
+        goToChats();
+        applyCurrentInstanceUi(resolved);
+        await loadChats(resolved.id, els.chatSearch?.value);
+        if (els.messages)
+          els.messages.innerHTML = `<div class="wa-empty-state"><p>Selecione um chat para ver as mensagens</p></div>`;
+        if (els.chatTitle) els.chatTitle.textContent = "Selecione um chat";
+        if (els.chatSubtitle) els.chatSubtitle.textContent = "";
+        return; // Já terminamos com sucesso
+      }
     }
-    const hint = clientUrl ? systemNameFromInstanceUrl(clientUrl) : "";
+
+    // 4) Fallback: usa hint de "system" (instance_url) para filtrar a lista
+    //    (somente se não conseguimos resolver por token)
+    let clientUrl = "";
+    if (CLIENT_SLUG) {
+      try {
+        const cfg = await fetch(`${API}/client-settings?client=${encodeURIComponent(CLIENT_SLUG)}`);
+        if (cfg.ok) {
+          const s = await cfg.json();
+          clientUrl = s.instance_url || s.instanceUrl || "";
+        }
+      } catch {}
+    }
+
+    const hint = clientUrl ? systemNameFromInstanceUrl(clientUrl) : (state.instanceFilterHint || "");
     state.instanceFilterHint = hint;
 
-    // 3) Filtra a lista exibida pelo domínio (quando houver)
     if (hint) {
-      const h = hint.toLowerCase();
       state.baseInstances = state.instances.filter((i) => {
         const sys = String(i.systemName || "").toLowerCase();
         const nm  = String(i.name || "").toLowerCase();
-        return sys.includes(h) || nm.includes(h);
+        return sys.includes(hint) || nm.includes(hint);
       });
     } else {
       state.baseInstances = [...state.instances];
     }
 
-    // 4) Renderiza a lista
     state.filteredInstances = [];
     renderInstances();
 
-    // 5) Decide qual instância abrir
-    let targetId = null;
-
-    // 5.1 Preferência: backend resolveu por token/systemName
-    if (resResolve && resResolve.ok) {
-      const r = await resResolve.json();
-      targetId = r?.id || null;
-    }
-
-    // 5.2 Se não resolveu, tenta o hint de ?inst= (pode ser id ou nome)
-    if (!targetId && INST_HINT) {
-      const ih = INST_HINT.toLowerCase();
-      const byId  = state.instances.find((i) => String(i.id).toLowerCase() === ih);
-      const byNm  = state.instances.find((i) => String(i.name || "").toLowerCase().includes(ih));
-      targetId = (byId || byNm)?.id || null;
-    }
-
-    // 5.3 Se ainda não achou, tenta match exato de systemName do domínio
-    if (!targetId && hint) {
-      const exactSys = state.instances.find((i) => String(i.systemName || "").toLowerCase() === hint.toLowerCase());
-      targetId = exactSys?.id || null;
-    }
-
-    // 6) Se tem targetId visível, clica na carta (não abre aleatória)
-    if (targetId) {
-      const sel = `.wa-instance-card[data-id="${CSS.escape(String(targetId))}"]`;
-      const card = document.querySelector(sel);
-      if (card) {
-        setTimeout(() => card.click(), 0);
-      } else {
-        showAlert("Instância configurada não está visível na lista. Verifique o domínio/instância.", "warning", 6000);
-      }
-    } else {
-      // se nada for resolvido, apenas mantém a lista filtrada
-      if (!state.baseInstances.length) {
-        els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Nenhuma instância encontrada para este cliente</p></div>`;
+    // 5) Fallback final: se sobrou algo, abre a primeira
+    if (state.baseInstances.length) {
+      const target = state.baseInstances[0];
+      if (target) {
+        setTimeout(async () => {
+          state.currentInstanceId = target.id;
+          goToChats();
+          applyCurrentInstanceUi(target);
+          await loadChats(target.id, els.chatSearch?.value);
+          if (els.messages)
+            els.messages.innerHTML = `<div class="wa-empty-state"><p>Selecione um chat para ver as mensagens</p></div>`;
+          if (els.chatTitle) els.chatTitle.textContent = "Selecione um chat";
+          if (els.chatSubtitle) els.chatSubtitle.textContent = "";
+        }, 300);
       }
     }
   } catch (err) {
@@ -467,7 +500,7 @@ async function loadInstances() {
     if (els.instanceList)
       els.instanceList.innerHTML = `<div class="wa-empty-state"><p>Erro ao carregar instâncias</p></div>`;
     showAlert(
-      "Falha ao carregar instâncias. Verifique se o domínio/token do cliente estão corretos.",
+      "Falha ao carregar instâncias. Verifique se o domínio está correto ou ajuste FRONT_ORIGINS no backend.",
       "warning",
       9000
     );
@@ -533,7 +566,6 @@ async function loadMessages(instanceId, chatObj) {
 /* ====== Exportação simples ====== */
 function doExportCurrentInstance() {
   if (!state.currentInstanceId) return;
-  // Abre a rota /api/instances/:id/export.txt (servidor monta o arquivo)
   const url = `${API}/instances/${encodeURIComponent(state.currentInstanceId)}/export.txt`;
   window.open(url, "_blank", "noopener");
 }
@@ -592,7 +624,7 @@ function handleLogin(e) {
   state.isAuthenticated = true;
   goToInstances();
 
-  // Antes de listar instâncias, calcula o filtro (client-settings) e depois carrega
+  // Prioriza TOKEN; se não achar, cai no filtro por system
   computeInstanceFilter()
     .finally(() => loadInstances())
     .finally(() => { logging = false; });
@@ -649,26 +681,7 @@ function wireUp() {
     const inst = (state.baseInstances.length ? state.baseInstances : state.instances)
       .find((i) => String(i.id) === String(state.currentInstanceId));
 
-    // header lateral
-    if (els.sidebarInstanceName) els.sidebarInstanceName.textContent = inst?.name || inst?.id || "Instância";
-    const online = isConnected(inst?.status);
-    if (els.sidebarInstanceStatus) {
-      els.sidebarInstanceStatus.textContent = online ? "Online" : "Offline";
-      els.sidebarInstanceStatus.className = `wa-status ${online ? "online" : "offline"}`;
-    }
-    if (els.btnExport) els.btnExport.disabled = false;
-
-    // avatar
-    const sidebarAv = document.querySelector("#screen-workspace .wa-avatar");
-    if (sidebarAv) {
-      sidebarAv.innerHTML = "";
-      const av = resolveInstanceAvatar(inst);
-      if (av) {
-        sidebarAv.insertAdjacentHTML("afterbegin",
-          `<img class="wa-avatar-img" src="${escapeHtml(av)}" alt="Avatar" />`);
-      }
-    }
-
+    applyCurrentInstanceUi(inst);
     goToChats();
     await loadChats(state.currentInstanceId, els.chatSearch?.value);
     if (els.messages) els.messages.innerHTML = `<div class="wa-empty-state"><p>Selecione um chat para ver as mensagens</p></div>`;
@@ -706,10 +719,7 @@ function wireUp() {
       }
     }
 
-    // marca ativo
     renderChats();
-
-    // carrega mensagens
     hideSidebarOnMobile();
     await loadMessages(state.currentInstanceId, chosen);
   });
@@ -733,15 +743,12 @@ function wireUp() {
 
   els.nextPage?.addEventListener("click", () => { state.chatPage++; renderChats(); });
   els.prevPage?.addEventListener("click", () => { state.chatPage = Math.max(0, state.chatPage - 1); renderChats(); });
-
-  // (Export com botão já ligado acima)
 }
 
 /* ====== Init ====== */
 function init() {
   wireUp();
 
-  // Autologin opcional: ?autologin=1
   if (AUTOLOGIN) {
     state.isAuthenticated = true;
     goToInstances();
@@ -749,7 +756,6 @@ function init() {
     return;
   }
 
-  // fluxo padrão
   goToLogin();
 }
 init();
