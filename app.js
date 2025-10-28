@@ -1,10 +1,23 @@
-/* app.js — Luna (PG‑Admin) com Conversas filtradas por cliente + autologin */
+/* app.js — Luna (PG‑Admin) com Conversas filtradas por cliente + autologin
+   - Autologin no iframe (autologin=1)
+   - Passa client=<slug> e hints de system/inst
+   - Recarrega iframe ao trocar cliente/Config/aba Conversas
+*/
 
 /* ====== Configuração ====== */
-const API_BASE_URL = window.API_BASE_URL !== undefined ? window.API_BASE_URL : "";
+(function ensureApiBaseGlobal() {
+  // Se o host já injeta window.API_BASE_URL use-o; senão, deixe "" (fetch relativo)
+  if (typeof window.API_BASE_URL === "undefined") {
+    window.API_BASE_URL = "";
+  } else if (typeof window.API_BASE_URL === "string") {
+    // remove barra final para evitar '//' nas requisições
+    window.API_BASE_URL = window.API_BASE_URL.replace(/\/+$/, "");
+  }
+})();
+const API_BASE_URL = window.API_BASE_URL;
 
 /* ====== Utilitários DOM ====== */
-const $ = (sel, root = document) => root.querySelector(sel);
+const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 /* ====== Toasts e Loader ====== */
@@ -22,14 +35,8 @@ function showToast(msg, type = "info") {
   box.appendChild(el);
   setTimeout(() => el.remove(), 3500);
 }
-function showLoading() {
-  const o = $("#loading-overlay");
-  if (o) o.style.display = "flex";
-}
-function hideLoading() {
-  const o = $("#loading-overlay");
-  if (o) o.style.display = "none";
-}
+function showLoading() { const o = $("#loading-overlay"); if (o) o.style.display = "flex"; }
+function hideLoading() { const o = $("#loading-overlay"); if (o) o.style.display = "none"; }
 
 /* ====== API helper com overlay ====== */
 async function api(path, options = {}) {
@@ -52,7 +59,7 @@ async function api(path, options = {}) {
   }
 }
 
-/* ====== Helper: dispara POST sem bloquear a UI ====== */
+/* ====== POST “fire-and-forget” ====== */
 async function postJsonNoWait(path, body, { timeoutMs = 1500 } = {}) {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
@@ -64,7 +71,7 @@ async function postJsonNoWait(path, body, { timeoutMs = 1500 } = {}) {
       signal: controller.signal,
     });
   } catch (_) {
-    // timeout esperado
+    /* timeout é esperado */
   } finally {
     clearTimeout(t);
   }
@@ -83,34 +90,30 @@ function normalizeInstanceUrl(raw) {
   return u.replace(/\/$/, "");
 }
 
-/* ====== Hints para Conversas ====== */
+/* ====== Hints extraídos do instanceUrl (para Conversas) ====== */
 function systemNameFromInstanceUrl(u) {
   try {
     const host = new URL(u).hostname || "";
     return (host.split(".")[0] || "").toLowerCase();
-  } catch {
-    return "";
-  }
+  } catch { return ""; }
 }
 function instHintFromInstanceUrl(u) {
   try {
-    const url = new URL(u);
+    const url  = new URL(u);
     const hash = (url.hash || "").replace(/^#/, "");
     if (!hash) return "";
     const qs = new URLSearchParams(hash);
     return (qs.get("inst") || "").trim();
-  } catch {
-    return "";
-  }
+  } catch { return ""; }
 }
 
 /* ====== Estado global ====== */
 const state = {
   clients: [],
   selected: null,
-  queue: { items: [], page: 1, total: 0, pageSize: 15, search: "" },
+  queue:  { items: [], page: 1, total: 0, pageSize: 15, search: "" },
   totals: { items: [], page: 1, total: 0, pageSize: 15, search: "", sent: "all" },
-  kpis: { totais: 0, enviados: 0, fila: 0, pendentes: 0, last_sent_at: null },
+  kpis:   { totais: 0, enviados: 0, fila: 0, pendentes: 0, last_sent_at: null },
   settings: {
     autoRun: false,
     iaAuto: false,
@@ -122,13 +125,13 @@ const state = {
   },
 };
 
-// Flags para evitar buscas concorrentes de leads
+// Controle de concorrência
 let leadsBusy = false;
 
-// Atualização periódica da cota quando a aba Progresso está ativa
+// Atualização periódica da cota
 let quotaInterval = null;
 
-/* ====== Atualiza CTA do Loop ====== */
+/* ====== Loop: CTA ====== */
 async function refreshLoopCta() {
   const btn = $("#btnRunLoop");
   if (!state.selected || !btn) return;
@@ -139,11 +142,9 @@ async function refreshLoopCta() {
       btn.textContent = "▶️ Executando...";
     } else {
       btn.disabled = false;
-      if ((s.remaining_today || 0) > 0) {
-        btn.textContent = `▶️ Continuar Loop (${s.remaining_today} restantes)`;
-      } else {
-        btn.textContent = "▶️ Executar Loop";
-      }
+      btn.textContent = (s.remaining_today || 0) > 0
+        ? `▶️ Continuar Loop (${s.remaining_today} restantes)`
+        : "▶️ Executar Loop";
     }
   } catch {
     btn.disabled = false;
@@ -151,7 +152,7 @@ async function refreshLoopCta() {
   }
 }
 
-/* ====== Atualiza cota (barra de Progresso) ====== */
+/* ====== Progresso: cota ====== */
 async function loadQuota() {
   if (!state.selected) return;
   try {
@@ -161,30 +162,27 @@ async function loadQuota() {
     const remaining = Number(s.remaining_today || 0) || Math.max(cap - sent, 0);
     const pct = cap > 0 ? Math.min(100, Math.round((sent / cap) * 100)) : 0;
 
-    $("#quota-cap") && ($("#quota-cap").textContent = cap);
-    $("#quota-sent") && ($("#quota-sent").textContent = sent);
-    $("#quota-remaining") && ($("#quota-remaining").textContent = remaining);
-    $("#quota-fill") && ($("#quota-fill").style.width = `${pct}%`);
-    $("#quota-updated") && ($("#quota-updated").textContent = `Atualizado em ${new Date().toLocaleString("pt-BR")}`);
+    $("#quota-cap")        && ($("#quota-cap").textContent = cap);
+    $("#quota-sent")       && ($("#quota-sent").textContent = sent);
+    $("#quota-remaining")  && ($("#quota-remaining").textContent = remaining);
+    $("#quota-fill")       && ($("#quota-fill").style.width = `${pct}%`);
+    $("#quota-updated")    && ($("#quota-updated").textContent = `Atualizado em ${new Date().toLocaleString("pt-BR")}`);
 
     await refreshLoopCta();
   } catch {}
 }
 
-/* ====== Aba Conversas: configura iframe ====== */
+/* ====== Conversas (iframe) ====== */
+let lastConversasSrc = "";
 function ensureConversasIframe() {
   const frame = document.getElementById("conversasFrame");
   if (!frame) return;
 
-  // Base da API do backend principal para conversas
   const base = typeof window.API_BASE_URL === "string" && window.API_BASE_URL ? window.API_BASE_URL : "";
   const api  = base.endsWith("/") ? `${base}api` : `${base}/api`;
 
-  // Cliente selecionado
-  const client = state.selected || "";
-
-  // Extrai hints de sistema/instância a partir do endpoint salvo em Config
-  const sysHint  = systemNameFromInstanceUrl(state.settings.instanceUrl || "");
+  const client  = state.selected || "";
+  const sysHint = systemNameFromInstanceUrl(state.settings.instanceUrl || "");
   const instHint = instHintFromInstanceUrl(state.settings.instanceUrl || "");
 
   const qs = new URLSearchParams({ api, client, autologin: "1" });
@@ -192,11 +190,13 @@ function ensureConversasIframe() {
   if (instHint) qs.set("inst", instHint);
 
   const want = `./conversas.html?${qs.toString()}`;
-  const has  = frame.getAttribute("src") || "";
-  if (has !== want) frame.setAttribute("src", want);
+  if (want !== lastConversasSrc) {
+    lastConversasSrc = want;
+    frame.src = want;
+  }
 }
 
-/* ====== Tab navigation ====== */
+/* ====== Tabs ====== */
 function activateTab(tab) {
   $$(".tab-btn").forEach((b) => b.classList.remove("active"));
   $(`.tab-btn[data-tab="${tab}"]`)?.classList.add("active");
@@ -206,19 +206,15 @@ function activateTab(tab) {
   if (tab === "progress") {
     loadQuota();
     if (!quotaInterval) quotaInterval = setInterval(loadQuota, 30000);
-  } else {
-    if (quotaInterval) {
-      clearInterval(quotaInterval);
-      quotaInterval = null;
-    }
+  } else if (quotaInterval) {
+    clearInterval(quotaInterval);
+    quotaInterval = null;
   }
 
-  if (tab === "conversas") {
-    ensureConversasIframe();
-  }
+  if (tab === "conversas") ensureConversasIframe();
 }
 
-/* ====== Carrega lista de clientes ====== */
+/* ====== Clients ====== */
 async function loadClients() {
   try {
     const clients = await api("/api/clients");
@@ -229,8 +225,6 @@ async function loadClients() {
     }
   } catch {}
 }
-
-/* ====== Renderiza lista de clientes ====== */
 function renderClientList() {
   const ul = $("#clientList");
   if (!ul) return;
@@ -248,8 +242,6 @@ function renderClientList() {
   ul.innerHTML = "";
   list.forEach((li) => ul.appendChild(li));
 }
-
-/* ====== Cria novo cliente ====== */
 async function createClient(slugRaw) {
   try {
     const slug = String(slugRaw || "").trim().toLowerCase();
@@ -265,24 +257,18 @@ async function createClient(slugRaw) {
     selectClient(slug);
   } catch {}
 }
-
-/* ====== Seleciona cliente ====== */
 async function selectClient(slug) {
   state.selected = slug;
   const title = $("#clientTitle");
   if (title) title.textContent = slug || "—";
   renderClientList();
-  await Promise.all([
-    loadStats(), loadQueue(), loadTotals(), loadServerSettings(),
-  ]);
+  await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings()]);
   await refreshLoopCta();
   await loadQuota();
 
-  // Se aba conversas está ativa, recarrega o iframe
+  // Se a aba Conversas está visível, recarregue o iframe
   const conversasVisible = !$("#tab-conversas")?.classList.contains("tab-hidden");
-  if (conversasVisible) {
-    ensureConversasIframe();
-  }
+  if (conversasVisible) ensureConversasIframe();
 }
 
 /* ====== KPIs ====== */
@@ -301,13 +287,11 @@ async function loadStats() {
   } catch {}
 }
 function renderKPIs() {
-  $("#kpiTotais") && ($("#kpiTotais").textContent = state.kpis.totais || 0);
-  $("#kpiEnviados") && ($("#kpiEnviados").textContent = state.kpis.enviados || 0);
-  $("#kpiFila") && ($("#kpiFila").textContent = state.kpis.fila || 0);
-  $("#kpiLastSent") &&
-    ($("#kpiLastSent").textContent = state.kpis.last_sent_at
-      ? new Date(state.kpis.last_sent_at).toLocaleString("pt-BR")
-      : "—");
+  $("#kpiTotais")  && ($("#kpiTotais").textContent  = state.kpis.totais || 0);
+  $("#kpiEnviados")&& ($("#kpiEnviados").textContent = state.kpis.enviados || 0);
+  $("#kpiFila")    && ($("#kpiFila").textContent     = state.kpis.fila || 0);
+  $("#kpiLastSent")&& ($("#kpiLastSent").textContent =
+    state.kpis.last_sent_at ? new Date(state.kpis.last_sent_at).toLocaleString("pt-BR") : "—");
 }
 
 /* ====== Fila ====== */
@@ -326,14 +310,14 @@ async function loadQueue() {
 function renderQueue() {
   const wrap = $("#queueBody");
   if (!wrap) return;
+
   if (!state.queue.items.length) {
     wrap.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/4">Nenhum contato na fila</div></div>`;
   } else {
-    wrap.innerHTML = state.queue.items
-      .map((item) => {
-        const name = item.name || "-";
-        const phone = item.phone || "-";
-        return `
+    wrap.innerHTML = state.queue.items.map((item) => {
+      const name = item.name || "-";
+      const phone = item.phone || "-";
+      return `
         <div class="row">
           <div>${name}</div>
           <div>${phone}</div>
@@ -342,25 +326,21 @@ function renderQueue() {
             <button class="secondary" data-phone="${phone}" data-name="${name}" data-act="remove">Remover</button>
           </div>
         </div>`;
-      })
-      .join("");
+    }).join("");
   }
+
   const totalPages = Math.max(1, Math.ceil((state.queue.total || 0) / state.queue.pageSize));
-  $("#queuePageInfo") &&
-    ($("#queuePageInfo").textContent = `Página ${state.queue.page} de ${totalPages} (${state.queue.total} itens)`);
-  $("#queuePrev") && ($("#queuePrev").disabled = state.queue.page <= 1);
-  $("#queueNext") && ($("#queueNext").disabled = state.queue.page >= totalPages);
+  $("#queuePageInfo") && ($("#queuePageInfo").textContent = `Página ${state.queue.page} de ${totalPages} (${state.queue.total} itens)`);
+  $("#queuePrev")     && ($("#queuePrev").disabled = state.queue.page <= 1);
+  $("#queueNext")     && ($("#queueNext").disabled = state.queue.page >= totalPages);
 
   wrap.querySelectorAll("button[data-act]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const phone = btn.dataset.phone;
       const name  = btn.dataset.name;
       const act   = btn.dataset.act;
-      if (act === "mark") {
-        await markAsSent(phone, name);
-      } else if (act === "remove") {
-        await removeFromQueue(phone);
-      }
+      if (act === "mark") await markAsSent(phone, name);
+      else if (act === "remove") await removeFromQueue(phone);
     });
   });
 }
@@ -403,18 +383,18 @@ async function loadTotals() {
 function renderTotals() {
   const wrap = $("#totalsBody");
   if (!wrap) return;
+
   if (!state.totals.items.length) {
     wrap.innerHTML = `<div class="row"><div class="muted" style="grid-column:1/6">Nenhum registro encontrado</div></div>`;
   } else {
-    wrap.innerHTML = state.totals.items
-      .map((item) => {
-        const name   = item.name || "-";
-        const phone  = item.phone || "-";
-        const niche  = item.niche || "-";
-        const sent   = !!item.mensagem_enviada;
-        const updated = item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "-";
-        const badge = `<span class="status ${sent ? "success" : "skipped"}">${sent ? "Enviado" : "Pendente"}</span>`;
-        return `
+    wrap.innerHTML = state.totals.items.map((item) => {
+      const name = item.name || "-";
+      const phone = item.phone || "-";
+      const niche = item.niche || "-";
+      const sent = !!item.mensagem_enviada;
+      const updated = item.updated_at ? new Date(item.updated_at).toLocaleString("pt-BR") : "-";
+      const badge = `<span class="status ${sent ? "success" : "skipped"}">${sent ? "Enviado" : "Pendente"}</span>`;
+      return `
         <div class="row" style="grid-template-columns: 1.5fr 1.2fr 1fr .8fr 1.2fr">
           <div>${name}</div>
           <div>${phone}</div>
@@ -422,14 +402,13 @@ function renderTotals() {
           <div>${badge}</div>
           <div>${updated}</div>
         </div>`;
-      })
-      .join("");
+    }).join("");
   }
+
   const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize));
-  $("#totalsPageInfo") &&
-    ($("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`);
-  $("#totalsPrev") && ($("#totalsPrev").disabled = state.totals.page <= 1);
-  $("#totalsNext") && ($("#totalsNext").disabled = state.totals.page >= totalPages);
+  $("#totalsPageInfo") && ($("#totalsPageInfo").textContent = `Página ${state.totals.page} de ${totalPages} (${state.totals.total} itens)`);
+  $("#totalsPrev")     && ($("#totalsPrev").disabled = state.totals.page <= 1);
+  $("#totalsNext")     && ($("#totalsNext").disabled = state.totals.page >= totalPages);
 }
 
 /* ====== Contatos / CSV ====== */
@@ -448,13 +427,9 @@ async function addContact() {
       body: JSON.stringify({ client: state.selected, name, phone, niche: niche || null }),
     });
     const msg =
-      r.status === "inserted"
-        ? "Contato adicionado"
-        : r.status === "skipped_conflict"
-          ? "Telefone já existe"
-          : r.status === "skipped_already_known"
-            ? "Já presente no histórico"
-            : "Processado";
+      r.status === "inserted" ? "Contato adicionado" :
+      r.status === "skipped_conflict" ? "Telefone já existe" :
+      r.status === "skipped_already_known" ? "Já presente no histórico" : "Processado";
     showToast(msg, r.status === "inserted" ? "success" : "warning");
     if ($("#addName"))  $("#addName").value  = "";
     if ($("#addPhone")) $("#addPhone").value = "";
@@ -473,7 +448,8 @@ async function importCSV(file) {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const result = await res.json();
     if ($("#csvResult")) {
-      $("#csvResult").textContent = `Inseridos: ${result.inserted || 0} | Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
+      $("#csvResult").textContent =
+        `Inseridos: ${result.inserted || 0} | Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
     }
     showToast("Importação concluída", "success");
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()]);
@@ -484,7 +460,7 @@ async function importCSV(file) {
   }
 }
 
-/* ====== Configurações (Config tab) ====== */
+/* ====== Configurações (aba Config) ====== */
 async function loadServerSettings() {
   if (!state.selected) return;
   try {
@@ -509,20 +485,18 @@ async function loadServerSettings() {
       dailyLimit: 30,
     };
   }
-  $("#cfgAutoRun")   && ($("#cfgAutoRun").checked   = !!state.settings.autoRun);
-  $("#cfgIaAuto")    && ($("#cfgIaAuto").checked    = !!state.settings.iaAuto);
-  $("#cfgInstanceUrl") && ($("#cfgInstanceUrl").value = state.settings.instanceUrl || "");
-  $("#cfgAuthHeader") && ($("#cfgAuthHeader").value  = state.settings.instanceAuthHeader || "token");
-  $("#cfgToken")     && ($("#cfgToken").value     = state.settings.instanceToken || "");
-  $("#cfgAuthScheme")&& ($("#cfgAuthScheme").value = state.settings.instanceAuthScheme || "");
-  $("#cfgDailyLimit")&& ($("#cfgDailyLimit").value = state.settings.dailyLimit ?? 30);
-  $("#cfgMeta")      && ($("#cfgMeta").textContent = "");
+  $("#cfgAutoRun")     && ($("#cfgAutoRun").checked     = !!state.settings.autoRun);
+  $("#cfgIaAuto")      && ($("#cfgIaAuto").checked      = !!state.settings.iaAuto);
+  $("#cfgInstanceUrl") && ($("#cfgInstanceUrl").value   = state.settings.instanceUrl || "");
+  $("#cfgAuthHeader")  && ($("#cfgAuthHeader").value    = state.settings.instanceAuthHeader || "token");
+  $("#cfgToken")       && ($("#cfgToken").value         = state.settings.instanceToken || "");
+  $("#cfgAuthScheme")  && ($("#cfgAuthScheme").value    = state.settings.instanceAuthScheme || "");
+  $("#cfgDailyLimit")  && ($("#cfgDailyLimit").value    = state.settings.dailyLimit ?? 30);
+  $("#cfgMeta")        && ($("#cfgMeta").textContent    = "");
 
-  // Se a aba Conversas estiver ativa, atualiza o iframe para refletir hints da instância
+  // Se a aba Conversas estiver ativa, atualize o iframe (para refletir hints)
   const activeTab = document.querySelector(".tab-btn.active")?.dataset.tab;
-  if (activeTab === "conversas") {
-    ensureConversasIframe();
-  }
+  if (activeTab === "conversas") ensureConversasIframe();
 }
 async function saveServerSettings() {
   if (!state.selected) return;
@@ -545,6 +519,9 @@ async function saveServerSettings() {
     await api("/api/client-settings", { method: "POST", body: JSON.stringify(payload) });
     showToast("Configurações salvas", "success");
     await Promise.all([loadServerSettings(), loadQuota(), refreshLoopCta()]);
+    // Se a Conversas estiver aberta, aplique novo filtro/hints imediatamente
+    const activeTab = document.querySelector(".tab-btn.active")?.dataset.tab;
+    if (activeTab === "conversas") ensureConversasIframe();
   } catch {}
 }
 
@@ -590,7 +567,6 @@ async function searchLeadsAndSave() {
     showToast("Informe pelo menos Região ou Nicho", "warning");
     return;
   }
-
   if (leadsBusy) {
     showToast("Uma busca já está em execução… aguarde terminar.", "warning");
     return;
@@ -598,7 +574,7 @@ async function searchLeadsAndSave() {
 
   leadsBusy = true;
   if (btn) {
-    btn.disabled   = true;
+    btn.disabled = true;
     btn.dataset.prevText = btn.textContent;
     btn.textContent = "⏳ Buscando…";
   }
@@ -616,11 +592,11 @@ async function searchLeadsAndSave() {
     showToast(`Leads adicionados: ${result.inserted || 0}`, "success");
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()]);
   } catch (e) {
-    // api() já trata toasts
+    // api() já tratou o toast
   } finally {
     leadsBusy = false;
     if (btn) {
-      btn.disabled   = false;
+      btn.disabled = false;
       btn.textContent = btn.dataset.prevText || "🔎 Buscar & Salvar";
       delete btn.dataset.prevText;
     }
@@ -635,7 +611,7 @@ async function deleteClient() {
     return;
   }
   const confirm1 = window.confirm(
-    `Tem certeza que deseja APAGAR as tabelas e dados do cliente "${slug}"?\n\nEsta ação NÃO pode ser desfeita.`,
+    `Tem certeza que deseja APAGAR as tabelas e dados do cliente "${slug}"?\n\nEsta ação NÃO pode ser desfeita.`
   );
   if (!confirm1) return;
   const typed = window.prompt(`Para confirmar, digite o slug do cliente exatamente como abaixo:\n\n${slug}`);
@@ -647,8 +623,9 @@ async function deleteClient() {
     await api("/api/delete-client", { method: "DELETE", body: JSON.stringify({ client: slug }) });
     showToast(`Tabelas de ${slug} apagadas com sucesso`, "success");
     await loadClients();
-    if (state.clients.length > 0) selectClient(state.clients[0].slug);
-    else {
+    if (state.clients.length > 0) {
+      selectClient(state.clients[0].slug);
+    } else {
       state.selected = null;
       const title = $("#clientTitle");
       if (title) title.textContent = "—";
@@ -659,7 +636,7 @@ async function deleteClient() {
       $("#kpiTotais") && ($("#kpiTotais").textContent = 0);
       $("#kpiEnviados") && ($("#kpiEnviados").textContent = 0);
       $("#kpiFila")    && ($("#kpiFila").textContent    = 0);
-      $("#kpiLastSent") && ($("#kpiLastSent").textContent = "—");
+      $("#kpiLastSent")&& ($("#kpiLastSent").textContent = "—");
       $("#quota-fill") && ($("#quota-fill").style.width = "0%");
       $("#quota-sent") && ($("#quota-sent").textContent = "0");
       $("#quota-cap")  && ($("#quota-cap").textContent  = "30");
@@ -674,15 +651,19 @@ async function deleteClient() {
 
 /* ====== Eventos iniciais ====== */
 document.addEventListener("DOMContentLoaded", () => {
+  // Se vier ?client=foo na URL do admin, seleciona direto
+  try {
+    const url = new URL(window.location.href);
+    const presetClient = (url.searchParams.get("client") || "").trim();
+    if (presetClient) state.selected = presetClient;
+  } catch {}
+
   $$(".tab-btn").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const tab = btn.dataset.tab;
-      activateTab(tab);
-    });
+    btn.addEventListener("click", () => activateTab(btn.dataset.tab));
   });
   activateTab("queue");
 
-  $("#clientSearch") && $("#clientSearch").addEventListener("input", renderClientList);
+  $("#clientSearch")    && $("#clientSearch").addEventListener("input", renderClientList);
   $("#btnCreateClient") && $("#btnCreateClient").addEventListener("click", () => createClient($("#newClientInput").value));
 
   $("#queueSearch") && $("#queueSearch").addEventListener("input", (e) => {
@@ -691,17 +672,11 @@ document.addEventListener("DOMContentLoaded", () => {
     loadQueue();
   });
   $("#queuePrev") && $("#queuePrev").addEventListener("click", () => {
-    if (state.queue.page > 1) {
-      state.queue.page--;
-      loadQueue();
-    }
+    if (state.queue.page > 1) { state.queue.page--; loadQueue(); }
   });
   $("#queueNext") && $("#queueNext").addEventListener("click", () => {
     const totalPages = Math.max(1, Math.ceil((state.queue.total || 0) / state.queue.pageSize));
-    if (state.queue.page < totalPages) {
-      state.queue.page++;
-      loadQueue();
-    }
+    if (state.queue.page < totalPages) { state.queue.page++; loadQueue(); }
   });
 
   $("#totalsSearch") && $("#totalsSearch").addEventListener("input", (e) => {
@@ -715,17 +690,11 @@ document.addEventListener("DOMContentLoaded", () => {
     loadTotals();
   });
   $("#totalsPrev") && $("#totalsPrev").addEventListener("click", () => {
-    if (state.totals.page > 1) {
-      state.totals.page--;
-      loadTotals();
-    }
+    if (state.totals.page > 1) { state.totals.page--; loadTotals(); }
   });
   $("#totalsNext") && $("#totalsNext").addEventListener("click", () => {
     const totalPages = Math.max(1, Math.ceil((state.totals.total || 0) / state.totals.pageSize));
-    if (state.totals.page < totalPages) {
-      state.totals.page++;
-      loadTotals();
-    }
+    if (state.totals.page < totalPages) { state.totals.page++; loadTotals(); }
   });
 
   $("#btnAddContact") && $("#btnAddContact").addEventListener("click", addContact);
@@ -733,20 +702,14 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#csvForm") && $("#csvForm").addEventListener("submit", (e) => {
     e.preventDefault();
     const file = $("#csvFile")?.files?.[0];
-    if (!file) {
-      showToast("Selecione um CSV", "warning");
-      return;
-    }
+    if (!file) { showToast("Selecione um CSV", "warning"); return; }
     importCSV(file);
   });
 
   $("#btnSaveConfig") && $("#btnSaveConfig").addEventListener("click", saveServerSettings);
-  $("#btnRunLoop") && $("#btnRunLoop").addEventListener("click", runLoop);
-  $("#btnStopLoop") && $("#btnStopLoop").addEventListener("click", (e) => {
-    e.preventDefault();
-    stopLoop();
-  });
-  $("#btnClearTable") && $("#btnClearTable").addEventListener("click", deleteClient);
+  $("#btnRunLoop")   && $("#btnRunLoop").addEventListener("click", runLoop);
+  $("#btnStopLoop")  && $("#btnStopLoop").addEventListener("click", (e) => { e.preventDefault(); stopLoop(); });
+  $("#btnClearTable")&& $("#btnClearTable").addEventListener("click", deleteClient);
 
   $("#btnLeadsSearch") && $("#btnLeadsSearch").addEventListener("click", searchLeadsAndSave);
 
@@ -754,7 +717,9 @@ document.addEventListener("DOMContentLoaded", () => {
     $("#btnRefreshAll").addEventListener("click", async () => {
       await loadClients();
       if (state.selected) {
-        await Promise.all([loadStats(), loadQueue(), loadTotals(), loadServerSettings(), loadQuota(), refreshLoopCta()]);
+        await Promise.all([
+          loadStats(), loadQueue(), loadTotals(), loadServerSettings(), loadQuota(), refreshLoopCta()
+        ]);
         const conversasVisible = !$("#tab-conversas")?.classList.contains("tab-hidden");
         if (conversasVisible) ensureConversasIframe();
       }
@@ -762,14 +727,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   loadClients();
 
-  // Se a URL contiver o parâmetro ?tab=conversas, abre a aba Conversas automaticamente
+  // Se a URL contiver ?tab=conversas, abre a aba automaticamente
   try {
     const _url = new URL(window.location.href);
     const _tab = (_url.searchParams.get("tab") || "").toLowerCase();
-    if (_tab === "conversas") {
-      activateTab("conversas");
-    }
-  } catch (err) {
-    // ignore erros de URL
-  }
+    if (_tab === "conversas") activateTab("conversas");
+  } catch {}
 });
