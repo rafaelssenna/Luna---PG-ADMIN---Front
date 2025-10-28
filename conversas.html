@@ -1,161 +1,149 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
-  <title>Supervisão WhatsApp - Luna</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="theme-color" content="#111b21" />
-  <link rel="stylesheet" href="./conversas.css" />
+  <title>Luna — Conversas</title>
+
+  <!-- Reaproveita seu CSS global do front (cores, tipografia, componentes) -->
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* Ajustes mínimos caso o CSS global não tenha algo */
+    .hidden { display: none !important; }
+    .wa-sidebar { width: 360px; min-width: 320px; border-right: 1px solid rgba(255,255,255,0.06); }
+    .wa-pane   { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+    .wa-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+    .wa-body   { flex: 1; min-height: 0; overflow: auto; }
+    .wa-toolbar{ display: flex; align-items: center; gap: 8px; padding: 8px 12px; }
+    .wa-list   { padding: 8px 8px 24px; }
+    .wa-instance-card,
+    .wa-chat-item { display: flex; gap: 10px; padding: 10px; border-radius: 10px; cursor: pointer; }
+    .wa-instance-card:hover,
+    .wa-chat-item:hover { background: rgba(255,255,255,0.04); }
+    .wa-chat-item.active { background: rgba(0,255,128,0.08); }
+    .wa-avatar, .wa-chat-avatar, .wa-instance-card-avatar, .wa-chat-item-avatar {
+      width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.06);
+      display: inline-flex; align-items: center; justify-content: center; overflow: hidden;
+      color: rgba(255,255,255,0.6);
+    }
+    .wa-avatar-img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+    .wa-badge.online  { color:#00df81; }
+    .wa-badge.offline { color:#f25f5c; }
+    .wa-empty-state { padding: 32px; text-align: center; color: rgba(255,255,255,0.6); }
+    .wa-status.online  { color:#00df81; }
+    .wa-status.offline { color:#f25f5c; }
+    .msg { padding: 10px 12px; margin: 8px 12px; border-radius: 10px; max-width: 75%; white-space: pre-wrap; }
+    .msg.user    { background: rgba(0,255,128,0.08); align-self: flex-end; }
+    .msg.client  { background: rgba(255,255,255,0.06); align-self: flex-start; }
+    .msg .meta { opacity: .6; font-size: 12px; margin-top: 6px; }
+    .messages-col { display: flex; flex-direction: column; gap: 2px; padding: 16px 0; }
+    .toolbar-spacer { flex: 1; }
+    .wa-top { display:flex; height: 100vh; }
+    .app-alert { position: fixed; left: 16px; bottom: 16px; padding: 10px 14px; border-radius: 8px; background: #202b20; color: #d2ffe9; border-left: 4px solid #00df81; z-index: 20; }
+    .app-alert.warning { background: #2b2420; color: #ffe6d2; border-left-color: #ffb703; }
+    .wa-search { width:100%; }
+    .wa-toolbar input { width: 100%; }
+    .wa-pagination { display: flex; align-items: center; gap: 10px; padding: 6px 10px; }
+    .wa-btn { padding: 8px 12px; border-radius: 8px; background: rgba(255,255,255,0.07); border: none; color: inherit; cursor: pointer; }
+    .wa-btn[disabled] { opacity: .5; cursor: default; }
+    .wa-hstack { display:flex; align-items:center; gap:8px; }
+  </style>
 </head>
 <body>
-  <!-- Alerta global -->
-  <div id="appAlert" class="app-alert hidden" role="status" aria-live="polite">
+  <!-- Alertas -->
+  <div id="appAlert" class="app-alert hidden" role="status">
     <span id="appAlertText"></span>
   </div>
 
-  <!-- ====== TELA: INSTÂNCIAS ====== -->
-  <main id="screen-instances" class="whatsapp-layout" role="main" aria-label="Seleção de instâncias">
-    <aside class="wa-sidebar" aria-label="Lista de instâncias">
-      <header class="wa-sidebar-header">
-        <div class="wa-profile">
-          <div class="wa-avatar" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
-            </svg>
-          </div>
-          <h2>Instâncias</h2>
-        </div>
-        <div class="wa-actions" role="group" aria-label="Ações de instâncias">
-          <button id="btnRefresh" class="wa-icon-btn" title="Atualizar instâncias" aria-label="Atualizar">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-              <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
-            </svg>
-          </button>
-          <button id="btnLogout" class="wa-icon-btn" title="Sair" aria-label="Sair">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-              <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z"/>
-            </svg>
-          </button>
-        </div>
-      </header>
+  <!-- Tela de Login (dummy) -->
+  <section id="screen-login" aria-label="Login">
+    <div class="wa-body" style="display:flex;align-items:center;justify-content:center;min-height:60vh;">
+      <form id="loginForm" class="wa-card" style="width:360px;padding:24px;border-radius:12px;background:rgba(255,255,255,0.04);">
+        <h2 style="margin:0 0 16px 0;">Entrar</h2>
+        <label>Usuário</label>
+        <input id="username" type="text" placeholder="usuário" style="width:100%;margin:6px 0 12px 0;" />
+        <label>Senha</label>
+        <input id="password" type="password" placeholder="••••••••" style="width:100%;margin:6px 0 16px 0;" />
+        <button class="login-button wa-btn" type="submit" style="width:100%;">Entrar</button>
+      </form>
+    </div>
+  </section>
 
-      <nav class="wa-search" aria-label="Pesquisar instâncias">
-        <div class="wa-search-input">
-          <svg class="search-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-            <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-          </svg>
-          <input type="text" id="instanceSearch" placeholder="Pesquisar instâncias" />
+  <!-- Tela: Lista de Instâncias -->
+  <section id="screen-instances" class="hidden" aria-label="Instâncias">
+    <div class="wa-header">
+      <div class="wa-hstack">
+        <div class="wa-avatar">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM9 11H7V9h2v2zm4 0h-2V9h2v2zm4 0h-2V9h2v2z"/></svg>
         </div>
-      </nav>
-
-      <div id="instanceList" class="wa-chat-list" role="listbox" aria-label="Instâncias disponíveis"></div>
-    </aside>
-
-    <section class="wa-main" aria-label="Painel principal">
-      <div class="wa-welcome" aria-live="polite">
-        <div class="wa-welcome-content">
-          <div class="wa-welcome-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z"/>
-            </svg>
-          </div>
-          <h2>Supervisão WhatsApp</h2>
-          <p>Selecione uma instância à esquerda para visualizar os chats e mensagens.</p>
-          <p class="wa-welcome-hint">Mantenha seu sistema de supervisão organizado e eficiente.</p>
-        </div>
+        <strong>Instâncias</strong>
       </div>
-    </section>
-  </main>
+      <div class="toolbar-spacer"></div>
+      <button id="btnRefresh" class="wa-btn" title="Atualizar">⟳</button>
+      <button id="btnLogout" class="wa-btn" title="Sair">Sair</button>
+    </div>
+    <div class="wa-toolbar">
+      <input id="instanceSearch" class="wa-search" type="search" placeholder="Pesquisar instâncias" />
+    </div>
+    <div id="instanceList" class="wa-list" role="listbox" aria-label="Lista de instâncias"></div>
+  </section>
 
-  <!-- ====== TELA: WORKSPACE ====== -->
-  <main id="screen-workspace" class="whatsapp-layout hidden" role="main" aria-label="Workspace de chats e mensagens">
-    <aside class="wa-sidebar" aria-label="Lista de chats">
-      <header class="wa-sidebar-header">
-        <div class="wa-profile">
-          <button id="btnBack" class="wa-back-btn" aria-label="Voltar para instâncias" title="Voltar">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-              <path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
-            </svg>
-          </button>
-          <div class="wa-avatar" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
-            </svg>
-          </div>
-          <div class="wa-instance-info">
-            <h2 id="sidebarInstanceName">Instância</h2>
-            <span id="sidebarInstanceStatus" class="wa-status"></span>
-          </div>
-        </div>
-      </header>
-
-      <nav class="wa-search" aria-label="Pesquisar chats">
-        <div class="wa-search-input">
-          <svg class="search-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-            <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
-          </svg>
-          <input type="text" id="chatSearch" placeholder="Pesquisar chats" />
-        </div>
-      </nav>
-
-      <div id="chatList" class="wa-chat-list" role="listbox" aria-label="Chats"></div>
-
-      <div class="wa-pagination">
-        <button id="prevPage" class="wa-page-btn" disabled aria-label="Página anterior">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-            <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
-          </svg>
-        </button>
-        <span id="pageInfo" class="wa-page-info" aria-live="polite">0 / 0</span>
-        <button id="nextPage" class="wa-page-btn" disabled aria-label="Próxima página">
-          <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-            <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
-          </svg>
-        </button>
-      </div>
-    </aside>
-
-    <section class="wa-main" aria-label="Mensagens e conversa">
-      <header class="wa-chat-header">
-        <div class="wa-chat-info">
-          <div class="wa-chat-avatar" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
-            </svg>
-          </div>
-          <div class="wa-chat-details">
-            <h3 id="chatTitle">Selecione um chat</h3>
-            <span id="chatSubtitle" class="wa-chat-subtitle"></span>
+  <!-- Tela: Workspace (lista de chats + mensagens) -->
+  <section id="screen-workspace" class="hidden" aria-label="Workspace de Conversas">
+    <div class="wa-top">
+      <!-- Sidebar -->
+      <aside class="wa-sidebar">
+        <div class="wa-header">
+          <button id="btnBack" class="wa-btn" title="Voltar">←</button>
+          <div class="wa-hstack">
+            <div class="wa-avatar"></div>
+            <div>
+              <div id="sidebarInstanceName" style="font-weight:600;">Instância</div>
+              <div id="sidebarInstanceStatus" class="wa-status offline">Offline</div>
+            </div>
           </div>
         </div>
-        <div class="wa-chat-actions">
-          <button id="btnExport" class="wa-icon-btn" title="Exportar mensagens" disabled aria-label="Exportar mensagens">
-            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" focusable="false">
-              <path d="M19 12v7H5v-7H3v7c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-7h-2zm-6 .67l2.59-2.58L17 11.5l-5 5-5-5 1.41-1.41L11 12.67V3h2z"/>
-            </svg>
-          </button>
+        <div class="wa-toolbar">
+          <input id="chatSearch" class="wa-search" type="search" placeholder="Buscar chats/número..." />
+          <button id="btnExport" class="wa-btn" title="Exportar" disabled>Exportar</button>
         </div>
-      </header>
+        <div id="chatList" class="wa-list" role="listbox" aria-label="Lista de chats"></div>
+        <div class="wa-pagination">
+          <button id="prevPage" class="wa-btn">Anterior</button>
+          <div id="pageInfo" aria-live="polite">0 de 0</div>
+          <button id="nextPage" class="wa-btn">Próxima</button>
+        </div>
+      </aside>
 
-      <!-- Progresso de exportação -->
-      <div id="exportProgress" class="export-progress hidden" aria-hidden="true">
-        <div class="export-progress__header">
-          <span id="exportProgressLabel">Preparando exportação…</span>
-          <button id="exportCancelBtn" type="button" class="export-progress__cancel">Cancelar</button>
+      <!-- Painel de mensagens -->
+      <main class="wa-pane">
+        <div class="wa-header">
+          <div class="wa-chat-avatar"></div>
+          <div>
+            <div id="chatTitle" style="font-weight:600;">Selecione um chat</div>
+            <div id="chatSubtitle" style="opacity:.7;"></div>
+          </div>
         </div>
-        <div class="export-progress__barwrap">
-          <div id="exportProgressBar" class="export-progress__bar" style="width:0%"></div>
+        <div id="messages" class="wa-body">
+          <div class="wa-empty-state"><p>Selecione um chat para ver as mensagens</p></div>
         </div>
-        <div class="export-progress__meta">
-          <span id="exportProgressCounts">0 / 0</span>
-          <span id="exportProgressPct">0%</span>
-        </div>
-      </div>
 
-      <div id="messages" class="wa-messages" aria-live="polite"></div>
-    </section>
-  </main>
+        <!-- (Opcional) Barra de progresso de export (id mantidos para compatibilidade) -->
+        <div id="exportProgress" class="hidden" style="padding:10px 16px;border-top:1px solid rgba(255,255,255,0.06);">
+          <div id="exportProgressLabel" style="margin-bottom:6px;">Exportando…</div>
+          <div style="height:8px;border-radius:8px;background:rgba(255,255,255,0.08);overflow:hidden;">
+            <div id="exportProgressBar" style="width:0%;height:8px;background:#00df81;"></div>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:6px;align-items:center;">
+            <div id="exportProgressCounts">0/0</div>
+            <div id="exportProgressPct">0%</div>
+            <button id="exportCancelBtn" class="wa-btn">Cancelar</button>
+          </div>
+        </div>
+      </main>
+    </div>
+  </section>
 
-  <script src="./conversas.js" defer></script>
+  <script src="conversas.js"></script>
 </body>
 </html>
