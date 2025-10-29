@@ -682,6 +682,44 @@ button.secondary:active,
   transition: var(--transition);
 }
 
+/*
+ * Estilo para áreas de texto com a classe "input".
+ * Define aparência consistente com os campos de entrada padrão.
+ */
+textarea.input {
+  background: var(--surface-elevated);
+  border: 1px solid var(--card-border);
+  color: var(--text);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  font-size: 14px;
+  transition: var(--transition);
+  width: 100%;
+  resize: vertical;
+}
+
+textarea.input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+  background: var(--card);
+}
+
+/*
+ * Estilização para textos de ajuda sob os campos de formulário.
+ */
+.help {
+  font-size: 13px;
+  color: var(--muted);
+  line-height: 1.4;
+  margin-top: -8px;
+}
+
+.help code {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 .form-row input:not([type="checkbox"]):focus,
 .form-row select:focus {
   outline: none;
