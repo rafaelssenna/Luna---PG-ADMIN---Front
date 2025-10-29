@@ -537,17 +537,33 @@ async function runLoop() {
 async function stopLoop() {
   if (!state.selected) return;
   try {
-    // Use the helper postJsonNoWait to respect API_BASE_URL and avoid CORS issues.
-    // Calling relative /api/stop-loop ensures rewrites (e.g. vercel.json) proxy correctly to the backend.
-    await postJsonNoWait("/api/stop-loop", { client: state.selected }, { timeoutMs: 3000 });
-    showToast("Parada do loop solicitada", "warning");
-    // Refresh stats and loop state without awaiting the stop response.
-    Promise.allSettled([loadStats(), loadServerSettings(), loadQuota(), refreshLoopCta()]);
+    const res = await fetch('/api/stop-loop', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client: state.selected }),
+    });
+
+    const text = await res.text().catch(() => '');
+    let msg = text;
+    try { msg = JSON.parse(text).message || text; } catch {}
+
+    if (!res.ok) {
+      if (res.status === 404 && /Nenhum loop ativo/i.test(msg)) {
+        showToast('Nenhum loop em execução para este cliente.', 'warning');
+      } else if (res.status === 400) {
+        showToast(`Parâmetros inválidos: ${msg || 'verifique o slug do cliente'}`, 'error');
+      } else {
+        showToast(`Falha ao parar loop (${res.status}): ${msg || 'erro'}`, 'error');
+      }
+    } else {
+      showToast(msg || 'Parada do loop solicitada', 'warning');
+      // opcional: atualizar estado pós-parada
+      Promise.allSettled([loadStats(), loadServerSettings(), loadQuota(), refreshLoopCta()]);
+    }
   } catch (e) {
     console.error(e);
-    showToast("Falha ao solicitar parada do loop", "error");
+    showToast('Falha de rede ao solicitar parada do loop', 'error');
   } finally {
-    // Always refresh CTA even if the stop request fails.
     await refreshLoopCta();
   }
 }
