@@ -132,25 +132,40 @@ let leadsBusy = false;
 let quotaInterval = null;
 
 /* ====== Loop: CTA ====== */
+/* ====== Loop: CTA ====== */
 async function refreshLoopCta() {
   const btn = $("#btnRunLoop");
   if (!state.selected || !btn) return;
+
   try {
     const s = await api(`/api/loop-state?client=${encodeURIComponent(state.selected)}`);
-    if (s.loop_status === "running") {
+
+    // Heurística anti-stale: só consideramos "running" se for recente.
+    const nowMs  = Date.parse(s.now || new Date().toISOString());
+    const lastMs = Date.parse(s.last_run_at || 0);
+    const fresh  = Number.isFinite(lastMs) && (nowMs - lastMs) < 120000; // 2 min
+
+    // Preferimos o flag do servidor se existir; senão, caímos na heurística.
+    const actuallyRunning =
+      (s.actually_running === true) ||
+      (s.loop_status === "running" && fresh);
+
+    if (actuallyRunning) {
       btn.disabled = true;
       btn.textContent = "▶️ Executando...";
     } else {
       btn.disabled = false;
-      btn.textContent = (s.remaining_today || 0) > 0
-        ? `▶️ Continuar Loop (${s.remaining_today} restantes)`
-        : "▶️ Executar Loop";
+      btn.textContent =
+        (Number(s.remaining_today || 0) > 0)
+          ? `▶️ Continuar Loop (${s.remaining_today} restantes)`
+          : "▶️ Executar Loop";
     }
   } catch {
     btn.disabled = false;
     btn.textContent = "▶️ Executar Loop";
   }
 }
+
 
 /* ====== Progresso: cota ====== */
 async function loadQuota() {
