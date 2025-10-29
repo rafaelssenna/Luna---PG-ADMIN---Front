@@ -122,6 +122,7 @@ const state = {
     instanceAuthHeader: "token",
     instanceAuthScheme: "",
     dailyLimit: 30,
+    messageTemplate: "", // << novo
   },
 };
 
@@ -481,63 +482,56 @@ async function loadServerSettings() {
   try {
     const s = await api(`/api/client-settings?client=${encodeURIComponent(state.selected)}`);
     state.settings = {
-      autoRun: !!s.autoRun,
-      iaAuto:  !!s.iaAuto,
-      instanceUrl: s.instanceUrl || s.instance_url || "",
-      instanceToken: s.instanceToken || s.instance_token || "",
-      instanceAuthHeader: s.instanceAuthHeader || s.instance_auth_header || "token",
-      instanceAuthScheme: s.instanceAuthScheme || s.instance_auth_scheme || "",
-      dailyLimit: Number.isFinite(Number(s.dailyLimit)) ? Number(s.dailyLimit) : 30,
+      autoRun:           !!s.autoRun,
+      iaAuto:            !!s.iaAuto,
+      instanceUrl:        s.instanceUrl || "",
+      instanceToken:      s.instanceToken || "",
+      instanceAuthHeader: s.instanceAuthHeader || "token",
+      instanceAuthScheme: s.instanceAuthScheme || "",
+      dailyLimit:         Number(s.dailyLimit || 30),
+      messageTemplate:    s.messageTemplate || "", // << novo
     };
-  } catch {
-    state.settings = {
-      autoRun: false,
-      iaAuto:  false,
-      instanceUrl: "",
-      instanceToken: "",
-      instanceAuthHeader: "token",
-      instanceAuthScheme: "",
-      dailyLimit: 30,
-    };
-  }
-  $("#cfgAutoRun")     && ($("#cfgAutoRun").checked     = !!state.settings.autoRun);
-  $("#cfgIaAuto")      && ($("#cfgIaAuto").checked      = !!state.settings.iaAuto);
-  $("#cfgInstanceUrl") && ($("#cfgInstanceUrl").value   = state.settings.instanceUrl || "");
-  $("#cfgAuthHeader")  && ($("#cfgAuthHeader").value    = state.settings.instanceAuthHeader || "token");
-  $("#cfgToken")       && ($("#cfgToken").value         = state.settings.instanceToken || "");
-  $("#cfgAuthScheme")  && ($("#cfgAuthScheme").value    = state.settings.instanceAuthScheme || "");
-  $("#cfgDailyLimit")  && ($("#cfgDailyLimit").value    = state.settings.dailyLimit ?? 30);
-  $("#cfgMeta")        && ($("#cfgMeta").textContent    = "");
 
-  // Se a aba Conversas estiver ativa, atualize o iframe (para refletir hints)
-  const activeTab = document.querySelector(".tab-btn.active")?.dataset.tab;
-  if (activeTab === "conversas") ensureConversasIframe();
+    // preencher inputs
+    $("#cfgAutoRun")             && ($("#cfgAutoRun").checked             = state.settings.autoRun);
+    $("#cfgIaAuto")              && ($("#cfgIaAuto").checked              = state.settings.iaAuto);
+    $("#cfgInstanceUrl")         && ($("#cfgInstanceUrl").value          = state.settings.instanceUrl);
+    $("#cfgInstanceToken")       && ($("#cfgInstanceToken").value        = state.settings.instanceToken);
+    $("#cfgInstanceAuthHeader")  && ($("#cfgInstanceAuthHeader").value   = state.settings.instanceAuthHeader);
+    $("#cfgInstanceAuthScheme")  && ($("#cfgInstanceAuthScheme").value   = state.settings.instanceAuthScheme);
+    $("#cfgDailyLimit")          && ($("#cfgDailyLimit").value           = state.settings.dailyLimit);
+    $("#cfgMessageTemplate")     && ($("#cfgMessageTemplate").value      = state.settings.messageTemplate); // << novo
+  } catch (e) {
+    console.error(e);
+  }
 }
 async function saveServerSettings() {
   if (!state.selected) return;
-  const dailyLimitRaw = ($("#cfgDailyLimit")?.value || "").trim();
-  const dailyLimit = Number.isFinite(Number.parseInt(dailyLimitRaw, 10))
-    ? Math.max(1, Math.min(10000, Number.parseInt(dailyLimitRaw, 10)))
-    : null;
-
-  const payload = {
-    client: state.selected,
-    autoRun: $("#cfgAutoRun")?.checked || false,
-    iaAuto:  $("#cfgIaAuto")?.checked || false,
-    instanceUrl: normalizeInstanceUrl($("#cfgInstanceUrl")?.value || ""),
-    instanceToken: ($("#cfgToken")?.value || "").trim(),
-    instanceAuthHeader: ($("#cfgAuthHeader")?.value || "token").trim() || "token",
-    instanceAuthScheme: ($("#cfgAuthScheme")?.value || "").trim(),
-    dailyLimit,
-  };
   try {
-    await api("/api/client-settings", { method: "POST", body: JSON.stringify(payload) });
-    showToast("Configurações salvas", "success");
-    await Promise.all([loadServerSettings(), loadQuota(), refreshLoopCta()]);
-    // Se a Conversas estiver aberta, aplique novo filtro/hints imediatamente
-    const activeTab = document.querySelector(".tab-btn.active")?.dataset.tab;
-    if (activeTab === "conversas") ensureConversasIframe();
-  } catch {}
+    const payload = {
+      client: state.selected,
+      autoRun:            $("#cfgAutoRun")?.checked ?? false,
+      iaAuto:             $("#cfgIaAuto")?.checked ?? false,
+      instanceUrl:        $("#cfgInstanceUrl")?.value ?? "",
+      instanceToken:      $("#cfgInstanceToken")?.value ?? "",
+      instanceAuthHeader: $("#cfgInstanceAuthHeader")?.value ?? "token",
+      instanceAuthScheme: $("#cfgInstanceAuthScheme")?.value ?? "",
+      dailyLimit:         Number($("#cfgDailyLimit")?.value || 30),
+      messageTemplate:    $("#cfgMessageTemplate")?.value ?? "", // << novo
+    };
+
+    await api(`/api/client-settings`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+
+    showToast("Configurações salvas.", "success");
+    await loadServerSettings();
+    await refreshLoopCta();
+  } catch (e) {
+    console.error(e);
+    showToast("Falha ao salvar configurações.", "error");
+  }
 }
 
 /* ====== Loop ====== */
