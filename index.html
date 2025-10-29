@@ -244,6 +244,18 @@
             <input id="cfgDailyLimit" type="number" min="1" max="10000" placeholder="30" />
             <div class="muted" style="font-size:12px">Máximo de mensagens/dia para este cliente.</div>
           </div>
+          
+          <div class="field">
+            <label for="cfgMessageTemplate">Mensagem do loop (template)</label>
+            <textarea id="cfgMessageTemplate" class="input" rows="3"
+              placeholder="Ex.: Oi {NOME}, tudo bem? Vocês trabalham com {NICHO}? Sou da {CLIENTE}."></textarea>
+            <div class="help">
+              Placeholders: <code>{NOME}</code>/<code>{NAME}</code>,
+              <code>{CLIENTE}</code>/<code>{CLIENT}</code>,
+              <code>{TELEFONE}</code>/<code>{PHONE}</code>,
+              <code>{NICHO}</code>. Aceita emojis 😊.
+            </div>
+          </div>
 
           <div class="form-row">
             <button id="btnSaveConfig" class="primary" type="button">💾 Salvar</button>
