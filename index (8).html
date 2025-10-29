@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Luna</title>
+
+  <!-- Estilos principais do app -->
+  <link rel="stylesheet" href="./styles.css" />
+
+  <!-- Ajuste do loader: canto inferior direito, discreto -->
+  <style>
+    .loading-overlay {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 9999;
+      background: rgba(0,0,0,.60);
+      color: #fff;
+      padding: 10px 12px;
+      border-radius: 10px;
+      box-shadow: 0 6px 20px rgba(0,0,0,.25);
+      display: none;
+      align-items: center;
+      gap: 10px;
+      pointer-events: none;
+      backdrop-filter: blur(2px);
+      -webkit-backdrop-filter: blur(2px);
+    }
+    .loading-overlay .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    .loading-overlay .label { font-size: 12px; opacity: .9; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* Barra de cota (fallback) */
+    .quota-row { display: flex; align-items: center; gap: 10px; }
+    .quota-bar { flex: 1 1 auto; height: 10px; background: #ececec; border-radius: 999px; overflow: hidden; }
+    .quota-fill { height: 100%; width: 0%; background: var(--accent, #4f46e5); transition: width .4s ease; }
+    .planned-list { list-style: none; padding-left: 0; margin: 0; }
+    .planned-list li { padding: 4px 0; border-bottom: 1px dashed rgba(0,0,0,.1); }
+
+    /* Conversas (iframe em tela cheia) */
+    .iframe-full {
+      width: 100%;
+      height: calc(100vh - 120px);
+      border: none;
+      background: #0d171c;
+      display: block;
+    }
+  </style>
+
+  <!-- Add-on de progresso -->
+  <script defer src="/progress.bundle.js"></script>
+</head>
+<body>
+  <!-- Topbar -->
+  <header class="topbar">
+    <a href="./" class="brand" aria-label="Luna — Página inicial">
+      <img src="./lunalogo.png" alt="Luna" class="brand-logo" loading="eager" decoding="async" />
+    </a>
+    <button id="btnRefreshAll" class="icon-btn" title="Atualizar">⟳</button>
+  </header>
+  
+  <div class="container">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-title">Clientes</div>
+
+      <div class="search-box">
+        <input id="clientSearch" type="text" placeholder="Buscar clientes..." />
+      </div>
+
+      <ul id="clientList" class="client-list">
+        <!-- itens renderizados via JS -->
+      </ul>
+
+      <div class="new-client">
+        <div class="label">Novo Cliente</div>
+        <input id="newClientInput" type="text" placeholder="Ex: joana" />
+        <button id="btnCreateClient" class="primary">+ Criar Cliente</button>
+      </div>
+    </aside>
+
+    <!-- Main content -->
+    <main class="main">
+      <div class="page-head">
+        <h1 id="clientTitle">—</h1>
+      </div>
+
+      <!-- KPIs -->
+      <section class="kpis">
+        <div class="kpi">
+          <div class="kpi-icon">🥞</div>
+          <div class="kpi-body">
+            <div class="kpi-label">Totais</div>
+            <div id="kpiTotais" class="kpi-value">0</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-icon">✅</div>
+          <div class="kpi-body">
+            <div class="kpi-label">Enviados</div>
+            <div id="kpiEnviados" class="kpi-value">0</div>
+            <div id="kpiLastSent" class="kpi-sub muted">—</div>
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi-icon">📋</div>
+          <div class="kpi-body">
+            <div class="kpi-label">Na Fila</div>
+            <div id="kpiFila" class="kpi-value">0</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Tabs -->
+      <nav class="tabs">
+        <button id="tabButtonQueue"    class="tab-btn active" data-tab="queue">Fila</button>
+        <button id="tabButtonTotals"   class="tab-btn" data-tab="totals">Totais</button>
+        <button id="tabButtonLeads"    class="tab-btn" data-tab="leads">Leads</button>
+        <button id="tabButtonAdd"      class="tab-btn" data-tab="add">Adicionar Contato</button>
+        <button id="tabButtonImport"   class="tab-btn" data-tab="import">Importar CSV</button>
+        <button id="tabButtonProgress" class="tab-btn" data-tab="progress">Progresso</button>
+        <button id="tabButtonConfig"   class="tab-btn" data-tab="config">Config</button>
+        <!-- NOVO -->
+        <button id="tabButtonConversas" class="tab-btn" data-tab="conversas">Conversas</button>
+      </nav>
+
+      <!-- TAB: FILA -->
+      <section id="tab-queue" class="tab">
+        <div class="toolbar">
+          <input id="queueSearch" type="text" placeholder="Buscar na fila..." />
+        </div>
+        <div class="table">
+          <div class="thead">
+            <div>Nome</div><div>Telefone</div><div>Ações</div>
+          </div>
+          <div id="queueBody" class="tbody"></div>
+          <div class="tfoot">
+            <div class="pager">
+              <button id="queuePrev">◀</button>
+              <span id="queuePageInfo">Página 1</span>
+              <button id="queueNext">▶</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: TOTAIS -->
+      <section id="tab-totals" class="tab tab-hidden">
+        <div class="toolbar">
+          <input id="totalsSearch" type="text" placeholder="Buscar no histórico..." />
+          <select id="totalsFilter">
+            <option value="all">Todos</option>
+            <option value="sim">Enviados</option>
+            <option value="nao">Pendentes</option>
+          </select>
+        </div>
+        <div class="table">
+          <div class="thead">
+            <div>Nome</div><div>Telefone</div><div>Nicho</div><div>Status</div><div>Atualizado</div>
+          </div>
+          <div id="totalsBody" class="tbody"></div>
+          <div class="tfoot">
+            <div class="pager">
+              <button id="totalsPrev">◀</button>
+              <span id="totalsPageInfo">Página 1</span>
+              <button id="totalsNext">▶</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: ADICIONAR CONTATO -->
+      <section id="tab-add" class="tab tab-hidden">
+        <div class="form">
+          <div class="form-row">
+            <label>Nome</label>
+            <input id="addName" type="text" placeholder="Nome do contato" />
+          </div>
+          <div class="form-row">
+            <label>Telefone</label>
+            <input id="addPhone" type="text" placeholder="(00) 00000-0000" />
+          </div>
+          <div class="form-row">
+            <label>Nicho (opcional)</label>
+            <input id="addNiche" type="text" placeholder="Ex: Tecnologia" />
+          </div>
+          <div class="form-row">
+            <button id="btnAddContact" class="primary">➕ Adicionar Contato</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: IMPORTAR CSV -->
+      <section id="tab-import" class="tab tab-hidden">
+        <form id="csvForm" class="form">
+          <div class="form-row">
+            <label>Arquivo CSV</label>
+            <input id="csvFile" name="file" type="file" accept=".csv,text/csv" />
+          </div>
+          <div class="form-row">
+            <button class="primary" type="submit">⬆️ Importar</button>
+          </div>
+          <div id="csvResult" class="muted"></div>
+        </form>
+      </section>
+
+      <!-- TAB: CONFIG -->
+      <section id="tab-config" class="tab tab-hidden">
+        <div class="form">
+          <div class="form-row">
+            <label><input type="checkbox" id="cfgAutoRun" /> Execução automática diária</label>
+          </div>
+          <div class="form-row">
+            <label><input type="checkbox" id="cfgIaAuto" /> Usar IA (enviar para gateway)</label>
+          </div>
+
+          <div class="form-row">
+            <label>Endpoint do Gateway (UAZAPI)</label>
+            <input id="cfgInstanceUrl" type="text" placeholder="https://hia-clientes.uazapi.com/send/text" />
+          </div>
+          <div class="form-row">
+            <label>Header do Token</label>
+            <!--
+              Os IDs destes campos precisam corresponder aos esperados pelo app.js.
+              cfgInstanceAuthHeader é o nome do header (ex.: "token" ou "Authorization").
+              cfgInstanceToken é o valor do token em si.
+              cfgInstanceAuthScheme é o prefixo do token (ex.: "Bearer ") opcional.
+            -->
+            <input id="cfgInstanceAuthHeader" type="text" placeholder="token" />
+          </div>
+          <div class="form-row">
+            <label>Token</label>
+            <input id="cfgInstanceToken" type="text" placeholder="seu_token" />
+          </div>
+          <div class="form-row">
+            <label>Prefixo do Token (Scheme)</label>
+            <input id="cfgInstanceAuthScheme" type="text" placeholder="(em branco para UAZAPI)" />
+          </div>
+
+          <div class="form-row">
+            <label>Limite diário por cliente</label>
+            <input id="cfgDailyLimit" type="number" min="1" max="10000" placeholder="30" />
+            <div class="muted" style="font-size:12px">Máximo de mensagens/dia para este cliente.</div>
+          </div>
+          
+          <!-- Mensagem do loop: estilizada igual aos outros campos -->
+          <div class="form-row">
+            <label for="cfgMessageTemplate">Mensagem do loop (template)</label>
+            <textarea id="cfgMessageTemplate" class="input" rows="3"
+              placeholder="Ex.: Oi {NOME}, tudo bem? Vocês trabalham com {NICHO}? Sou da {CLIENTE}."></textarea>
+            <div class="help">
+              Placeholders: <code>{NOME}</code>/<code>{NAME}</code>,
+              <code>{CLIENTE}</code>/<code>{CLIENT}</code>,
+              <code>{TELEFONE}</code>/<code>{PHONE}</code>,
+              <code>{NICHO}</code>. Aceita emojis 😊.
+            </div>
+          </div>
+
+          <div class="form-row">
+            <button id="btnSaveConfig" class="primary" type="button">💾 Salvar</button>
+          </div>
+          
+          <div class="form-row config-actions">
+            <button id="btnRunLoop" class="btn-success" type="button">▶️ Continuar Loop</button>
+            <button id="btnStopLoop" class="btn-warning" type="button">🛑 Parar Loop</button>
+          </div>
+          
+          <div class="form-row">
+            <button id="btnClearTable" class="btn-danger" type="button">🗑️ Apagar Tabela</button>
+          </div>
+
+          <div id="cfgMeta" class="muted"></div>
+        </div>
+      </section>
+
+      <!-- TAB: PROGRESSO -->
+      <section id="tab-progress" class="tab tab-hidden">
+        <div class="kpi-grid">
+          <div class="card">
+            <div class="card-title">Cota de Hoje</div>
+            <div class="quota-row">
+              <div class="quota-bar"><div id="quota-fill" class="quota-fill"></div></div>
+              <div class="quota-legend">
+                <span id="quota-sent">0</span>/<span id="quota-cap">30</span>
+                — <span id="quota-remaining">0</span> restantes
+              </div>
+            </div>
+            <div id="quota-updated" class="muted">—</div>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Próximos envios (hoje)</div>
+            <ul id="planned-list" class="planned-list">
+              <li class="muted">sem agendamentos ainda…</li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <div class="card-title">Último evento</div>
+            <div id="last-event" class="last-event muted">—</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">Feed em tempo real</div>
+          <div id="progress-feed" class="progress-feed">
+            <div class="muted">Aguardando eventos…</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: LEADS -->
+      <section id="tab-leads" class="tab tab-hidden">
+        <div class="form">
+          <div class="form-row">
+            <label>Região</label>
+            <input id="leadRegion" type="text" placeholder="Ex: Belo Horizonte/MG, MG, ou DDD 31" />
+          </div>
+          <div class="form-row">
+            <label>Nicho</label>
+            <input id="leadNiche" type="text" placeholder="Ex: Estética, Clínicas, etc." />
+          </div>
+          <div class="form-row">
+            <label>Limite</label>
+            <input id="leadLimit" type="number" min="1" max="1000" value="100" />
+          </div>
+          <div class="form-row">
+            <button id="btnLeadsSearch" class="primary" type="button">🔎 Buscar & Salvar</button>
+          </div>
+          <div id="leadsResult" class="muted"></div>
+        </div>
+      </section>
+
+      <!-- NOVA TAB: CONVERSAS -->
+      <section id="tab-conversas" class="tab tab-hidden">
+        <!-- o src será definido via JS, incluindo ?api= -->
+        <iframe id="conversasFrame" class="iframe-full"></iframe>
+      </section>
+    </main>
+  </div>
+
+  <!-- Toasts / Loader -->
+  <div id="toast-container" class="toast-container"></div>
+  <div id="loading-overlay" class="loading-overlay" role="status" aria-live="polite" style="display:none">
+    <div class="spinner"></div>
+    <div class="label">Carregando…</div>
+  </div>
+
+  <!-- API base do back (Railway) -->
+  <script>
+    window.API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app";
+  </script>
+
+  <!-- Lógica do app -->
+  <script src="./app.js"></script>
+</body>
+</html>
