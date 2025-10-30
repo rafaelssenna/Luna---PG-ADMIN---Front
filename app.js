@@ -1993,6 +1993,8 @@ app.post('/api/instances/:id/export-analysis', async (req, res) => {
     if (!slug || !validateSlug(slug)) {
       return res.status(400).json({ error: 'Cliente inválido' });
     }
+    // Permite ignorar o filtro da última análise quando forçado (force=1|true|yes|on)
+    const force = ['1','true','yes','on'].includes(String(req.query?.force ?? req.body?.force ?? '0').toLowerCase());
     // Log básico do início da análise para diagnosticar entradas
     console.log(`[export-analysis] Início — client=${slug}, instance=${id}`);
 
@@ -2111,8 +2113,9 @@ app.post('/api/instances/:id/export-analysis', async (req, res) => {
           }
         }
         if (numTs == null) continue;
-        if (lastTs && numTs <= new Date(lastTs).getTime()) {
-          continue; // ignora antigas
+        if (!force && lastTs && numTs <= new Date(lastTs).getTime()) {
+          // ignora mensagens antigas apenas se não estiver forçando
+          continue;
         }
         allMessages.push({ timestamp: numTs, msg });
         if (numTs > maxTs) maxTs = numTs;
@@ -2122,7 +2125,11 @@ app.post('/api/instances/:id/export-analysis', async (req, res) => {
     if (!allMessages.length) {
       appendLog('ℹ️ Nenhuma mensagem nova para analisar.');
       console.log(`[export-analysis] Nenhuma nova mensagem encontrada para ${slug}`);
-      return res.json({ ok: true, suggestions: '', info: 'Nenhuma mensagem nova para analisar.' });
+      // Retorna um PDF com mensagem padrão em vez de JSON
+      const emptyPdf = generatePdfBuffer('Nenhuma mensagem nova para analisar.');
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="analysis-${id}-${slug}.pdf"`);
+      return res.end(emptyPdf);
     }
 
     // Ordena todas as mensagens novas por timestamp asc
@@ -2245,7 +2252,12 @@ app.post('/api/instances/:id/export-analysis', async (req, res) => {
     const elapsed = Date.now() - startTime;
     appendLog(`🏁 Fim da análise — ${chunks.length} lotes, tempo total ${elapsed}ms`);
 
-    return res.json({ ok: true, suggestions, info: infoMessage });
+    // Ao final, sempre retorna um PDF com as sugestões (ou info), em vez de JSON
+    const finalText = suggestions || infoMessage || 'Nenhuma sugestão gerada.';
+    const pdfBuffer = generatePdfBuffer(finalText);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="analysis-${id}-${slug}.pdf"`);
+    return res.end(pdfBuffer);
     // ==================== Fim da nova lógica de análise ====================
   } catch (err) {
     console.error('Erro em export-analysis', err);
