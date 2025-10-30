@@ -627,32 +627,30 @@ async function loadMessages(instanceId, chatObj) {
 /* ====== Exportação simples ====== */
 function doExportCurrentInstance() {
   if (!state.currentInstanceId) return;
-  // Novo comportamento: envia as mensagens novas para análise da IA e em seguida
-  // abre o export.txt para download. Passa o slug do cliente para o backend.
-  const analysisUrl = `${API}/instances/${encodeURIComponent(state.currentInstanceId)}/export-analysis?client=${encodeURIComponent(CLIENT_SLUG)}`;
-  fetch(analysisUrl, { method: 'POST' })
+  // Novo comportamento: envia as mensagens para análise da IA e baixa o PDF de sugestões.
+  const instanceId = state.currentInstanceId;
+  const slug = CLIENT_SLUG;
+  const url = `${API}/instances/${encodeURIComponent(instanceId)}/export-analysis?client=${encodeURIComponent(slug)}&force=1`;
+  fetch(url, { method: 'POST' })
     .then(async (res) => {
-      let data;
-      try {
-        data = await res.json();
-      } catch {
-        data = { error: `Erro inesperado (${res.status})` };
-      }
-      if (res.ok && data && data.ok) {
-        const msg = data.suggestions || data.info || '';
-        if (msg) {
-          // Exibe as sugestões em um alert simples. Pode ser customizado conforme o design.
-          alert(msg);
-        } else {
-          alert('Análise concluída, sem sugestões.');
+      if (!res.ok) {
+        try {
+          const errText = await res.text();
+          showAlert(errText || 'Falha ao gerar relatório.', 'warning', 8000);
+        } catch {
+          showAlert('Falha ao gerar relatório.', 'warning', 8000);
         }
-        // Após a análise, ainda permite baixar o TXT completo (como antes)
-        const txtUrl = `${API}/instances/${encodeURIComponent(state.currentInstanceId)}/export.txt`;
-        window.open(txtUrl, '_blank', 'noopener');
-      } else {
-        const err = data?.error || 'Falha na análise ou na exportação.';
-        showAlert(err, 'warning', 8000);
+        return;
       }
+      // Trata a resposta como um arquivo PDF
+      const blob = await res.blob();
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = `analysis-${instanceId}-${slug}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(link.href);
     })
     .catch((err) => {
       showAlert(err?.message || 'Erro ao enviar para análise.', 'warning', 8000);
