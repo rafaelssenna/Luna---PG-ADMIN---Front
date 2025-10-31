@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Luna — Conversas</title>
+
+  <!-- Reaproveita seu CSS global do front (cores, tipografia, componentes) -->
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* Ajustes refinados para harmonizar com o tema global de cores (ver styles.css) */
+    .hidden { display: none !important; }
+
+    /* Estrutura básica */
+    .wa-top {
+      display: flex;
+      height: 100vh;
+    }
+    .wa-sidebar {
+      width: 360px;
+      min-width: 320px;
+      border-right: 1px solid var(--card-border);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .wa-pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      background: var(--surface);
+    }
+
+    /* Cabeçalhos e toolbars */
+    .wa-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--card-border);
+      background: var(--surface-elevated);
+    }
+    .wa-body {
+      flex: 1;
+      min-height: 0;
+      overflow: auto;
+      background: var(--surface);
+    }
+    .wa-toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: var(--surface-elevated);
+      border-bottom: 1px solid var(--card-border);
+    }
+    .wa-list {
+      padding: 8px;
+      flex: 1;
+      overflow-y: auto;
+    }
+
+    /* Cartões de instância e chats */
+    .wa-instance-card,
+    .wa-chat-item {
+      display: flex;
+      gap: 10px;
+      padding: 12px;
+      border-radius: var(--radius);
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    .wa-instance-card:hover,
+    .wa-chat-item:hover {
+      background: var(--card-hover);
+      border-color: var(--accent);
+    }
+    .wa-chat-item.active {
+      background: var(--accent-light);
+      border-color: var(--accent);
+    }
+
+    /* Avatares */
+    .wa-avatar,
+    .wa-chat-avatar,
+    .wa-instance-card-avatar,
+    .wa-chat-item-avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--surface-elevated);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      color: var(--muted);
+    }
+    .wa-avatar-img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      border-radius: 50%;
+    }
+
+    /* Badges e status */
+    .wa-badge.online,
+    .wa-status.online {
+      color: var(--success);
+    }
+    .wa-badge.offline,
+    .wa-status.offline {
+      color: var(--danger);
+    }
+
+    .wa-empty-state {
+      padding: 32px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    /* Mensagens */
+    .msg {
+      padding: 10px 14px;
+      margin: 8px 16px;
+      border-radius: var(--radius);
+      max-width: 75%;
+      white-space: pre-wrap;
+      box-shadow: var(--shadow-sm);
+    }
+    .msg.user {
+      background: var(--accent-light);
+      align-self: flex-end;
+      border-left: 3px solid var(--accent);
+    }
+    .msg.client {
+      background: var(--surface-elevated);
+      align-self: flex-start;
+      border-left: 3px solid var(--card-border);
+    }
+    .msg .meta {
+      opacity: 0.7;
+      font-size: 12px;
+      margin-top: 4px;
+      color: var(--muted);
+    }
+    .messages-col {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 16px;
+    }
+
+    /* Espaçador flexível */
+    .toolbar-spacer {
+      flex: 1;
+    }
+
+    /* Botões e paginação */
+    .wa-pagination {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--card-border);
+      background: var(--surface);
+    }
+    .wa-btn {
+      padding: 8px 14px;
+      border-radius: var(--radius);
+      background: var(--card);
+      border: 1px solid var(--card-border);
+      color: var(--text);
+      cursor: pointer;
+      transition: var(--transition);
+      font-size: 14px;
+    }
+    .wa-btn:hover:not([disabled]) {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+    }
+    .wa-btn[disabled] {
+      opacity: 0.5;
+      cursor: default;
+    }
+
+    /* Inputs de busca */
+    .wa-search {
+      width: 100%;
+    }
+    .wa-toolbar input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      color: var(--text);
+      font-size: 14px;
+      transition: var(--transition);
+    }
+    .wa-toolbar input::placeholder {
+      color: var(--muted);
+    }
+    .wa-toolbar input:focus {
+      outline: none;
+      border-color: var(--accent);
+      background: var(--surface-elevated);
+      box-shadow: 0 0 0 3px var(--accent-light);
+    }
+
+    /* Alertas */
+    .app-alert {
+      position: fixed;
+      left: 16px;
+      bottom: 16px;
+      padding: 12px 16px;
+      border-radius: var(--radius);
+      background: var(--warning-light);
+      color: var(--warning);
+      border-left: 4px solid var(--warning);
+      z-index: 20;
+      box-shadow: var(--shadow);
+    }
+    .app-alert.warning {
+      background: var(--danger-light);
+      color: var(--danger);
+      border-left-color: var(--danger);
+    }
+
+    /* Layouts auxiliares */
+    .wa-hstack {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Progresso de exportação */
+    #exportProgress {
+      background: var(--surface-elevated);
+      border-top: 1px solid var(--card-border);
+    }
+  </style>
+</head>
+<body>
+  <!-- Alertas -->
+  <div id="appAlert" class="app-alert hidden" role="status">
+    <span id="appAlertText"></span>
+  </div>
+
+  <!-- Tela de Login (dummy) -->
+  <section id="screen-login" aria-label="Login">
+    <div class="wa-body" style="display:flex;align-items:center;justify-content:center;min-height:60vh;">
+      <form id="loginForm" class="wa-card" style="width:360px;padding:24px;border-radius:12px;background:rgba(255,255,255,0.04);">
+        <h2 style="margin:0 0 16px 0;">Entrar</h2>
+        <label>Usuário</label>
+        <input id="username" type="text" placeholder="usuário" style="width:100%;margin:6px 0 12px 0;" />
+        <label>Senha</label>
+        <input id="password" type="password" placeholder="••••••••" style="width:100%;margin:6px 0 16px 0;" />
+        <button class="login-button wa-btn" type="submit" style="width:100%;">Entrar</button>
+      </form>
+    </div>
+  </section>
+
+  <!-- Tela: Lista de Instâncias -->
+  <section id="screen-instances" class="hidden" aria-label="Instâncias">
+    <div class="wa-header">
+      <div class="wa-hstack">
+        <div class="wa-avatar">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="currentColor" d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM9 11H7V9h2v2zm4 0h-2V9h2v2zm4 0h-2V9h2v2z"/></svg>
+        </div>
+        <strong>Instâncias</strong>
+      </div>
+      <div class="toolbar-spacer"></div>
+      <button id="btnRefresh" class="wa-btn" title="Atualizar">⟳</button>
+      <button id="btnLogout" class="wa-btn" title="Sair">Sair</button>
+    </div>
+    <div class="wa-toolbar">
+      <input id="instanceSearch" class="wa-search" type="search" placeholder="Pesquisar instâncias" />
+    </div>
+    <div id="instanceList" class="wa-list" role="listbox" aria-label="Lista de instâncias"></div>
+  </section>
+
+  <!-- Tela: Workspace (lista de chats + mensagens) -->
+  <section id="screen-workspace" class="hidden" aria-label="Workspace de Conversas">
+    <div class="wa-top">
+      <!-- Sidebar -->
+      <aside class="wa-sidebar">
+        <div class="wa-header">
+          <button id="btnBack" class="wa-btn" title="Voltar">←</button>
+          <div class="wa-hstack">
+            <div class="wa-avatar"></div>
+            <div>
+              <div id="sidebarInstanceName" style="font-weight:600;">Instância</div>
+              <div id="sidebarInstanceStatus" class="wa-status offline">Offline</div>
+            </div>
+          </div>
+        </div>
+        <div class="wa-toolbar">
+          <input id="chatSearch" class="wa-search" type="search" placeholder="Buscar chats/número..." />
+          <button id="btnExport" class="wa-btn" title="Exportar" disabled>Exportar</button>
+        </div>
+        <div id="chatList" class="wa-list" role="listbox" aria-label="Lista de chats"></div>
+        <div class="wa-pagination">
+          <button id="prevPage" class="wa-btn">Anterior</button>
+          <div id="pageInfo" aria-live="polite">0 de 0</div>
+          <button id="nextPage" class="wa-btn">Próxima</button>
+        </div>
+      </aside>
+
+      <!-- Painel de mensagens -->
+      <main class="wa-pane">
+        <div class="wa-header">
+          <div class="wa-chat-avatar"></div>
+          <div>
+            <div id="chatTitle" style="font-weight:600;">Selecione um chat</div>
+            <div id="chatSubtitle" style="opacity:.7;"></div>
+          </div>
+        </div>
+        <div id="messages" class="wa-body">
+          <div class="wa-empty-state"><p>Selecione um chat para ver as mensagens</p></div>
+        </div>
+
+        <!-- (Opcional) Barra de progresso de export (id mantidos para compatibilidade) -->
+        <div id="exportProgress" class="hidden" style="padding:10px 16px;">
+          <div id="exportProgressLabel" style="margin-bottom:6px;">Exportando…</div>
+          <div style="height:8px;border-radius:8px;background:rgba(255,255,255,0.08);overflow:hidden;">
+            <div id="exportProgressBar" style="width:0%;height:8px;background:#00df81;"></div>
+          </div>
+          <div style="display:flex;gap:12px;margin-top:6px;align-items:center;">
+            <div id="exportProgressCounts">0/0</div>
+            <div id="exportProgressPct">0%</div>
+            <button id="exportCancelBtn" class="wa-btn">Cancelar</button>
+          </div>
+        </div>
+      </main>
+    </div>
+  </section>
+
+  <script src="conversas.js"></script>
+</body>
+</html>
