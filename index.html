@@ -357,9 +357,23 @@
     <div class="label">Carregando…</div>
   </div>
 
-  <!-- API base do back (Railway) -->
+  <!-- API base do back (Railway ou proxy Vercel) -->
   <script>
-    window.API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app";
+    // Se estiver no Vercel, usa URL relativa para aproveitar o proxy do vercel.json
+    // Se estiver local, usa URL completa do Railway
+    const isVercel = window.location.hostname.includes('vercel.app');
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    
+    if (isVercel) {
+      // No Vercel, usa URL relativa para aproveitar o proxy
+      window.API_BASE_URL = "";
+    } else if (isLocalhost) {
+      // Local, aponta direto para o Railway
+      window.API_BASE_URL = "https://luna-pg-admin-back-production.up.railway.app";
+    } else {
+      // Outros domínios, usa URL relativa
+      window.API_BASE_URL = "";
+    }
   </script>
 
   <!-- Lógica do app -->
