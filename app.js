@@ -64,11 +64,13 @@ function hideLoading() { const o = $("#loading-overlay"); if (o) o.style.display
 /* ====== API helper com overlay e retry ====== */
 async function api(path, options = {}) {
   const useRetry = options.retry !== false;
+  const timeoutMs = options.timeout || 30000; // Padrão 30s, pode ser customizado
   delete options.retry;
+  delete options.timeout;
   
   const fetchFn = async () => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 30000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     
     try {
       const res = await fetch(`${API_BASE_URL}${path}`, {
@@ -80,6 +82,12 @@ async function api(path, options = {}) {
       
       if (!res.ok) {
         const errorText = await res.text().catch(() => "");
+        
+        // Trata erros específicos
+        if (errorText.includes('idle-timeout') || errorText.includes('timeout')) {
+          throw new Error(`⏱️ Timeout: A operação demorou muito. Tente com menos dados ou aguarde o servidor processar.`);
+        }
+        
         throw new Error(errorText || `HTTP ${res.status}`);
       }
       
@@ -89,7 +97,8 @@ async function api(path, options = {}) {
     } catch (e) {
       clearTimeout(timeout);
       if (e.name === 'AbortError') {
-        throw new Error('Requisição expirou. Tente novamente.');
+        const timeoutSec = Math.floor(timeoutMs / 1000);
+        throw new Error(`Requisição expirou após ${timeoutSec}s. A operação pode estar demorando muito ou o servidor está lento.`);
       }
       throw e;
     }
@@ -754,17 +763,30 @@ async function searchLeadsAndSave() {
   leadsBusy = true;
   if (btn) {
     btn.disabled = true;
+    btn.classList.add("btn-loading");
     btn.dataset.prevText = btn.textContent;
     btn.textContent = "⏳ Buscando…";
   }
 
   $("#leadsResult") &&
-    ($("#leadsResult").textContent = `Buscando: região="${region}", nicho="${niche}", limite=${limit}`);
+    ($("#leadsResult").innerHTML = `
+      <div style="color: var(--accent); font-weight: 600;">
+        ⏳ Buscando leads... Esta operação pode demorar até 2 minutos.
+      </div>
+      <div style="font-size: 13px; color: var(--text-secondary); margin-top: 8px;">
+        Região: "${region}" | Nicho: "${niche}" | Limite: ${limit}
+      </div>
+    `);
 
   try {
+    // Busca de leads pode demorar muito (scraping), então:
+    // - Timeout de 2 minutos (120s)
+    // - Sem retry (não faz sentido tentar 3x um scraping)
     const result = await api("/api/leads", {
       method: "POST",
       body: JSON.stringify({ client: state.selected, region, niche, limit }),
+      timeout: 120000, // 2 minutos
+      retry: false // Não tentar novamente
     });
     const msg = `Encontrados: ${result.found || 0} | Inseridos: ${result.inserted || 0} | Duplicados/Ignorados: ${result.skipped || 0} | Erros: ${result.errors || 0}`;
     $("#leadsResult") && ($("#leadsResult").textContent = msg);
@@ -776,6 +798,7 @@ async function searchLeadsAndSave() {
     leadsBusy = false;
     if (btn) {
       btn.disabled = false;
+      btn.classList.remove("btn-loading");
       btn.textContent = btn.dataset.prevText || "🔎 Buscar & Salvar";
       delete btn.dataset.prevText;
     }
