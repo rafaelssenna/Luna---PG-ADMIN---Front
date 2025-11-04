@@ -2,6 +2,7 @@
    - Autologin no iframe (autologin=1)
    - Passa client=<slug> e hints de system/inst
    - Recarrega iframe ao trocar cliente/Config/aba Conversas
+   - Melhorias: retry automático, debouncing, validações, skeleton loaders
 */
 
 /* ====== Configuração ====== */
@@ -19,6 +20,28 @@ const API_BASE_URL = window.API_BASE_URL;
 /* ====== Utilitários DOM ====== */
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+
+/* ====== Debounce ====== */
+function debounce(func, wait = 300) {
+  let timeout;
+  return function executedFunction(...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  };
+}
+
+/* ====== Retry com backoff ====== */
+async function retryWithBackoff(fn, maxRetries = 3, delay = 1000) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (i === maxRetries - 1) throw error;
+      const waitTime = delay * Math.pow(2, i);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+  }
+}
 
 /* ====== Toasts e Loader ====== */
 function showToast(msg, type = "info") {
@@ -38,20 +61,49 @@ function showToast(msg, type = "info") {
 function showLoading() { const o = $("#loading-overlay"); if (o) o.style.display = "flex"; }
 function hideLoading() { const o = $("#loading-overlay"); if (o) o.style.display = "none"; }
 
-/* ====== API helper com overlay ====== */
+/* ====== API helper com overlay e retry ====== */
 async function api(path, options = {}) {
+  const useRetry = options.retry !== false;
+  delete options.retry;
+  
+  const fetchFn = async () => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30000);
+    
+    try {
+      const res = await fetch(`${API_BASE_URL}${path}`, {
+        ...options,
+        signal: controller.signal,
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      });
+      clearTimeout(timeout);
+      
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => "");
+        throw new Error(errorText || `HTTP ${res.status}`);
+      }
+      
+      const ct = (res.headers.get && res.headers.get("content-type")) || "";
+      if (!ct || res.status === 204) return {};
+      return await res.json();
+    } catch (e) {
+      clearTimeout(timeout);
+      if (e.name === 'AbortError') {
+        throw new Error('Requisição expirou. Tente novamente.');
+      }
+      throw e;
+    }
+  };
+  
   showLoading();
   try {
-    const res = await fetch(`${API_BASE_URL}${path}`, {
-      ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const ct = (res.headers.get && res.headers.get("content-type")) || "";
-    if (!ct || res.status === 204) return {};
-    return await res.json();
+    if (useRetry) {
+      return await retryWithBackoff(fetchFn);
+    } else {
+      return await fetchFn();
+    }
   } catch (e) {
-    console.error(e);
+    console.error("Erro na API:", e);
     showToast(`Erro: ${e.message}`, "error");
     throw e;
   } finally {
@@ -258,20 +310,50 @@ function renderClientList() {
   ul.innerHTML = "";
   list.forEach((li) => ul.appendChild(li));
 }
+/* ====== Validação de slug ====== */
+function validateSlug(slug) {
+  const errors = [];
+  if (!slug) errors.push("Nome do cliente é obrigatório");
+  if (slug.length > 64) errors.push("Nome deve ter até 64 caracteres");
+  if (!/^[a-z0-9_]*$/.test(slug)) errors.push("Use apenas minúsculas, números e _");
+  return errors;
+}
+
 async function createClient(slugRaw) {
   try {
     const slug = String(slugRaw || "").trim().toLowerCase();
-    if (!slug) return;
-    const ok = /^[a-z0-9_]{1,64}$/.test(slug);
-    if (!ok) {
-      showToast("Use apenas minúsculas, números e _ (até 64 caracteres)", "warning");
+    const errors = validateSlug(slug);
+    
+    const input = $("#newClientInput");
+    if (errors.length) {
+      showToast(errors.join(". "), "warning");
+      if (input) {
+        input.style.borderColor = "var(--danger)";
+        setTimeout(() => { input.style.borderColor = ""; }, 2000);
+      }
       return;
     }
+    
+    const btn = $("#btnCreateClient");
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add("btn-loading");
+    }
+    
     await api("/api/clients", { method: "POST", body: JSON.stringify({ slug }) });
-    showToast(`Cliente ${slug} criado`, "success");
+    showToast(`Cliente ${slug} criado com sucesso! ✨`, "success");
+    
+    if (input) input.value = "";
     await loadClients();
     selectClient(slug);
-  } catch {}
+  } catch {
+  } finally {
+    const btn = $("#btnCreateClient");
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("btn-loading");
+    }
+  }
 }
 async function selectClient(slug) {
   state.selected = slug;
@@ -313,6 +395,19 @@ function renderKPIs() {
 /* ====== Fila ====== */
 async function loadQueue() {
   if (!state.selected) return;
+  
+  // Mostra skeleton loader
+  const wrap = $("#queueBody");
+  if (wrap) {
+    wrap.innerHTML = Array(5).fill(0).map(() => `
+      <div class="row skeleton-table-row">
+        <div class="skeleton skeleton-text"></div>
+        <div class="skeleton skeleton-text"></div>
+        <div class="skeleton skeleton-text"></div>
+      </div>
+    `).join("");
+  }
+  
   const { page, pageSize, search } = state.queue;
   const q = new URLSearchParams({ client: state.selected, page, pageSize, search });
   try {
@@ -386,6 +481,21 @@ async function removeFromQueue(phone) {
 /* ====== Totais ====== */
 async function loadTotals() {
   if (!state.selected) return;
+  
+  // Mostra skeleton loader
+  const wrap = $("#totalsBody");
+  if (wrap) {
+    wrap.innerHTML = Array(5).fill(0).map(() => `
+      <div class="row" style="grid-template-columns: 1.5fr 1.2fr 1fr .8fr 1.2fr">
+        <div class="skeleton skeleton-text"></div>
+        <div class="skeleton skeleton-text"></div>
+        <div class="skeleton skeleton-text"></div>
+        <div class="skeleton skeleton-text"></div>
+        <div class="skeleton skeleton-text"></div>
+      </div>
+    `).join("");
+  }
+  
   const { page, pageSize, search, sent } = state.totals;
   const q = new URLSearchParams({ client: state.selected, page, pageSize, search, sent });
   try {
@@ -428,30 +538,74 @@ function renderTotals() {
 }
 
 /* ====== Contatos / CSV ====== */
+/* ====== Validação de contato ====== */
+function validateContact(name, phone) {
+  const errors = [];
+  if (!name || name.length < 2) errors.push("Nome deve ter pelo menos 2 caracteres");
+  if (!phone) errors.push("Telefone é obrigatório");
+  else {
+    const cleaned = phone.replace(/\D/g, "");
+    if (cleaned.length < 10 || cleaned.length > 11) {
+      errors.push("Telefone inválido (use DDD + número)");
+    }
+  }
+  return errors;
+}
+
 async function addContact() {
   if (!state.selected) return;
-  const name  = ($("#addName")?.value || "").trim();
-  const phone = ($("#addPhone")?.value || "").trim();
-  const niche = ($("#addNiche")?.value || "").trim();
-  if (!name || !phone) {
-    showToast("Informe nome e telefone", "warning");
+  
+  const nameEl  = $("#addName");
+  const phoneEl = $("#addPhone");
+  const nicheEl = $("#addNiche");
+  
+  const name  = (nameEl?.value || "").trim();
+  const phone = (phoneEl?.value || "").trim();
+  const niche = (nicheEl?.value || "").trim();
+  
+  const errors = validateContact(name, phone);
+  if (errors.length) {
+    showToast(errors.join(". "), "warning");
+    [nameEl, phoneEl].forEach(el => {
+      if (el && !el.value.trim()) {
+        el.style.borderColor = "var(--danger)";
+        setTimeout(() => { el.style.borderColor = ""; }, 2000);
+      }
+    });
     return;
   }
+  
+  const btn = $("#btnAddContact");
+  if (btn) {
+    btn.disabled = true;
+    btn.classList.add("btn-loading");
+  }
+  
   try {
     const r = await api("/api/contacts", {
       method: "POST",
       body: JSON.stringify({ client: state.selected, name, phone, niche: niche || null }),
     });
     const msg =
-      r.status === "inserted" ? "Contato adicionado" :
-      r.status === "skipped_conflict" ? "Telefone já existe" :
-      r.status === "skipped_already_known" ? "Já presente no histórico" : "Processado";
+      r.status === "inserted" ? "Contato adicionado com sucesso! ✨" :
+      r.status === "skipped_conflict" ? "Telefone já existe no sistema" :
+      r.status === "skipped_already_known" ? "Contato já presente no histórico" : "Processado";
     showToast(msg, r.status === "inserted" ? "success" : "warning");
-    if ($("#addName"))  $("#addName").value  = "";
-    if ($("#addPhone")) $("#addPhone").value = "";
-    if ($("#addNiche")) $("#addNiche").value = "";
+    
+    if (r.status === "inserted") {
+      if (nameEl) nameEl.value = "";
+      if (phoneEl) phoneEl.value = "";
+      if (nicheEl) nicheEl.value = "";
+    }
+    
     await Promise.all([loadStats(), loadQueue(), loadTotals(), loadClients(), loadQuota()]);
-  } catch {}
+  } catch {
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.classList.remove("btn-loading");
+    }
+  }
 }
 async function importCSV(file) {
   if (!state.selected || !file) return;
@@ -688,13 +842,23 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   activateTab("queue");
 
-  $("#clientSearch")    && $("#clientSearch").addEventListener("input", renderClientList);
+  // Busca de clientes com debounce
+  const debouncedClientSearch = debounce(() => renderClientList(), 300);
+  $("#clientSearch") && $("#clientSearch").addEventListener("input", debouncedClientSearch);
   $("#btnCreateClient") && $("#btnCreateClient").addEventListener("click", () => createClient($("#newClientInput").value));
 
-  $("#queueSearch") && $("#queueSearch").addEventListener("input", (e) => {
-    state.queue.search = e.target.value;
+  // Busca na fila com debounce
+  const debouncedQueueSearch = debounce((value) => {
+    state.queue.search = value;
     state.queue.page   = 1;
     loadQueue();
+  }, 400);
+  
+  $("#queueSearch") && $("#queueSearch").addEventListener("input", (e) => {
+    const input = e.target;
+    input.classList.add("input-loading");
+    debouncedQueueSearch(e.target.value);
+    setTimeout(() => input.classList.remove("input-loading"), 500);
   });
   $("#queuePrev") && $("#queuePrev").addEventListener("click", () => {
     if (state.queue.page > 1) { state.queue.page--; loadQueue(); }
@@ -704,10 +868,18 @@ document.addEventListener("DOMContentLoaded", () => {
     if (state.queue.page < totalPages) { state.queue.page++; loadQueue(); }
   });
 
-  $("#totalsSearch") && $("#totalsSearch").addEventListener("input", (e) => {
-    state.totals.search = e.target.value;
+  // Busca em totais com debounce
+  const debouncedTotalsSearch = debounce((value) => {
+    state.totals.search = value;
     state.totals.page   = 1;
     loadTotals();
+  }, 400);
+  
+  $("#totalsSearch") && $("#totalsSearch").addEventListener("input", (e) => {
+    const input = e.target;
+    input.classList.add("input-loading");
+    debouncedTotalsSearch(e.target.value);
+    setTimeout(() => input.classList.remove("input-loading"), 500);
   });
   $("#totalsFilter") && $("#totalsFilter").addEventListener("change", (e) => {
     state.totals.sent = e.target.value;
